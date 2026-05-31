@@ -1,0 +1,573 @@
+import { useEffect, useState } from "react";
+import { Link, useLocation } from "wouter";
+import { AppShell } from "@/components/app-shell";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
+import {
+  CheckCircle2,
+  AlertCircle,
+  Upload,
+  FileSpreadsheet,
+  Search,
+  Loader2,
+  ArrowRight,
+  RefreshCw,
+  FolderOpen,
+  FileText,
+} from "lucide-react";
+
+const CATEGORIES = [
+  "jd",
+  "hm_notes",
+  "rubrik",
+  "hired",
+  "not_hired",
+  "transcripts",
+  "scorecards",
+  "incumbents",
+  "benchmark_candidates",
+] as const;
+type Category = (typeof CATEGORIES)[number];
+
+const CATEGORY_LABEL: Record<Category, string> = {
+  jd: "Job description",
+  hm_notes: "HM notes",
+  rubrik: "Scoring rubrik",
+  hired: "Hired resumes",
+  not_hired: "Not-hired resumes",
+  transcripts: "Interview transcripts",
+  scorecards: "Scorecards",
+  incumbents: "Incumbent profiles",
+  benchmark_candidates: "Benchmark candidates",
+};
+
+interface RoleSummary {
+  roleId: string;
+  roleName: string;
+}
+
+interface PreviewFile {
+  fileId: string;
+  fileName: string;
+  webViewLink?: string;
+  category: Category | null;
+  autoDetected: boolean;
+}
+
+interface SheetListItem {
+  id: string;
+  name: string;
+}
+interface SheetInfo {
+  worksheets?: Array<{ title: string; rowCount?: number; headers?: string[] }>;
+  sheets?: Array<{ properties?: { title: string } }>;
+}
+
+export default function NewJob() {
+  const [, navigate] = useLocation();
+  const { toast } = useToast();
+
+  const [roles, setRoles] = useState<RoleSummary[]>([]);
+  const [rolesLoading, setRolesLoading] = useState(false);
+  const [roleId, setRoleId] = useState("");
+
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewFiles, setPreviewFiles] = useState<PreviewFile[]>([]);
+
+  const [mode, setMode] = useState<"upload" | "sheet">("upload");
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+
+  const [sheetSearch, setSheetSearch] = useState("");
+  const [sheets, setSheets] = useState<SheetListItem[]>([]);
+  const [sheetsLoading, setSheetsLoading] = useState(false);
+  const [pickedSheet, setPickedSheet] = useState<SheetListItem | null>(null);
+  const [sheetInfo, setSheetInfo] = useState<SheetInfo | null>(null);
+  const [pickedTab, setPickedTab] = useState<string>("");
+
+  const [submitting, setSubmitting] = useState(false);
+
+  async function loadRoles() {
+    setRolesLoading(true);
+    try {
+      const res = await apiRequest("GET", "/api/roles");
+      const data = await res.json();
+      setRoles(data.roles || []);
+    } catch (e: any) {
+      toast({ title: "Couldn't list roles", description: e.message, variant: "destructive" });
+    } finally {
+      setRolesLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadRoles();
+  }, []);
+
+  async function loadPreview(id: string) {
+    if (!id) return;
+    setPreviewLoading(true);
+    setPreviewFiles([]);
+    try {
+      const res = await apiRequest("POST", `/api/roles/${encodeURIComponent(id)}/preview`);
+      const data = await res.json();
+      setPreviewFiles(data.files || []);
+    } catch (e: any) {
+      toast({ title: "Couldn't load files", description: e.message, variant: "destructive" });
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  function onRoleChange(id: string) {
+    setRoleId(id);
+    if (id) loadPreview(id);
+    else setPreviewFiles([]);
+  }
+
+  async function setCategory(fileId: string, category: string) {
+    if (!roleId) return;
+    try {
+      const res = await apiRequest("POST", `/api/roles/${encodeURIComponent(roleId)}/categorize`, {
+        fileId,
+        category,
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.message || `Failed (${res.status})`);
+      }
+      setPreviewFiles((cur) =>
+        cur.map((f) =>
+          f.fileId === fileId
+            ? {
+                ...f,
+                category: category === "auto" ? f.category : (category as Category),
+                autoDetected: false,
+              }
+            : f,
+        ),
+      );
+      if (category === "auto") loadPreview(roleId);
+    } catch (e: any) {
+      toast({ title: "Couldn't save", description: e.message, variant: "destructive" });
+    }
+  }
+
+  async function searchSheets() {
+    setSheetsLoading(true);
+    try {
+      const res = await apiRequest("GET", `/api/sheets?q=${encodeURIComponent(sheetSearch)}`);
+      const data = await res.json();
+      setSheets(data.spreadsheets || []);
+    } catch (e: any) {
+      toast({ title: "Couldn't list sheets", description: e.message, variant: "destructive" });
+    } finally {
+      setSheetsLoading(false);
+    }
+  }
+
+  async function pickSheet(s: SheetListItem) {
+    setPickedSheet(s);
+    setSheetInfo(null);
+    setPickedTab("");
+    try {
+      const res = await apiRequest("GET", `/api/sheets/${s.id}/info`);
+      const data = await res.json();
+      setSheetInfo(data);
+      const tabs = extractTabs(data);
+      if (tabs.length) setPickedTab(tabs[0]);
+    } catch (e: any) {
+      toast({ title: "Couldn't load sheet info", description: e.message, variant: "destructive" });
+    }
+  }
+
+  function extractTabs(info: any): string[] {
+    if (!info) return [];
+    if (Array.isArray(info.worksheets)) {
+      return info.worksheets.map((w: any) => w.title || w.name).filter(Boolean);
+    }
+    if (Array.isArray(info.sheets)) {
+      return info.sheets.map((s: any) => s?.properties?.title).filter(Boolean);
+    }
+    return [];
+  }
+
+  async function startRun() {
+    if (!roleId) {
+      toast({ title: "Pick a role first", variant: "destructive" });
+      return;
+    }
+    if (uncategorized.length > 0) {
+      toast({
+        title: `${uncategorized.length} file(s) still need a category`,
+        description: "Pick a category for each or set it to skip below.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const form = new FormData();
+      form.append("roleId", roleId);
+      if (mode === "upload") {
+        if (!csvFile) {
+          toast({ title: "Pick a CSV first", variant: "destructive" });
+          setSubmitting(false);
+          return;
+        }
+        form.append("csv", csvFile);
+      } else {
+        if (!pickedSheet || !pickedTab) {
+          toast({ title: "Pick a sheet and tab", variant: "destructive" });
+          setSubmitting(false);
+          return;
+        }
+        form.append("sheetId", pickedSheet.id);
+        form.append("sheetName", pickedTab);
+      }
+      const res = await fetch(`${(window as any).__API_BASE__ || ""}/api/jobs`, {
+        method: "POST",
+        body: form,
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || `Failed (${res.status})`);
+      }
+      const data = await res.json();
+      navigate(`/jobs/${data.jobId}`);
+    } catch (e: any) {
+      toast({ title: "Couldn't start run", description: e.message, variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const noRoles = !rolesLoading && roles.length === 0;
+  const uncategorized = previewFiles.filter((f) => !f.category);
+  const categorized = previewFiles.filter((f) => f.category);
+
+  // Category counts for the summary
+  const counts: Record<Category, number> = {
+    jd: 0,
+    hm_notes: 0,
+    rubrik: 0,
+    hired: 0,
+    not_hired: 0,
+    transcripts: 0,
+    scorecards: 0,
+    incumbents: 0,
+    benchmark_candidates: 0,
+  };
+  for (const f of categorized) counts[f.category!]++;
+
+  return (
+    <AppShell>
+      <h1 className="text-xl font-bold tracking-tight mb-6">New scoring run</h1>
+
+      <div className="grid lg:grid-cols-2 gap-6">
+        <Card>
+          <CardContent className="p-5">
+            <div className="font-medium mb-3 flex items-center gap-2">
+              <span className="h-6 w-6 rounded-full bg-primary/15 text-primary inline-flex items-center justify-center text-xs font-bold">
+                1
+              </span>
+              Role
+            </div>
+            <div className="space-y-3">
+              <div>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="role-select">Pick a role</Label>
+                  <button
+                    type="button"
+                    onClick={loadRoles}
+                    disabled={rolesLoading}
+                    data-testid="button-refresh-roles"
+                    className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${rolesLoading ? "animate-spin" : ""}`} />
+                    Refresh
+                  </button>
+                </div>
+                <select
+                  id="role-select"
+                  data-testid="select-role"
+                  className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                  value={roleId}
+                  onChange={(e) => onRoleChange(e.target.value)}
+                  disabled={rolesLoading || noRoles}
+                >
+                  <option value="">
+                    {rolesLoading
+                      ? "Loading roles…"
+                      : noRoles
+                        ? "No roles created yet"
+                        : "— pick a role —"}
+                  </option>
+                  {roles.map((r) => (
+                    <option key={r.roleId} value={r.roleId}>
+                      {r.roleName} ({r.roleId})
+                    </option>
+                  ))}
+                </select>
+                {noRoles && (
+                  <Link
+                    href="/manage"
+                    data-testid="link-manage-empty"
+                    className="mt-2 inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                  >
+                    <FolderOpen className="h-4 w-4" /> Create a role in Manage roles
+                  </Link>
+                )}
+              </div>
+
+              {previewLoading && (
+                <div className="text-sm text-muted-foreground inline-flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Searching Drive…
+                </div>
+              )}
+
+              {!previewLoading && roleId && previewFiles.length === 0 && (
+                <div className="rounded-md border border-border p-3 bg-card/50 text-sm text-muted-foreground">
+                  No files found starting with{" "}
+                  <code className="text-xs bg-muted px-1 py-0.5 rounded">{roleId}</code>. Rename
+                  Drive files to start with this ID and try again.
+                </div>
+              )}
+
+              {!previewLoading && previewFiles.length > 0 && (
+                <div className="rounded-md border border-border p-3 bg-card/50">
+                  <div className="text-sm font-medium mb-2">Files detected</div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                    {CATEGORIES.map((c) => (
+                      <CountRow key={c} label={CATEGORY_LABEL[c]} count={counts[c]} />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-5">
+            <div className="font-medium mb-3 flex items-center gap-2">
+              <span className="h-6 w-6 rounded-full bg-primary/15 text-primary inline-flex items-center justify-center text-xs font-bold">
+                2
+              </span>
+              Candidates
+            </div>
+            <Tabs value={mode} onValueChange={(v) => setMode(v as any)}>
+              <TabsList className="grid grid-cols-2 w-full">
+                <TabsTrigger value="upload" data-testid="tab-upload">
+                  <Upload className="h-4 w-4 mr-2" /> Upload CSV
+                </TabsTrigger>
+                <TabsTrigger value="sheet" data-testid="tab-sheet">
+                  <FileSpreadsheet className="h-4 w-4 mr-2" /> Google Sheet
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="upload" className="space-y-3 pt-4">
+                <Label htmlFor="csv">Candidate CSV</Label>
+                <Input
+                  id="csv"
+                  data-testid="input-csv"
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={(e) => setCsvFile(e.target.files?.[0] || null)}
+                />
+                {csvFile && (
+                  <p className="text-xs text-muted-foreground">
+                    {csvFile.name} — {(csvFile.size / 1024).toFixed(1)} KB
+                  </p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Every column becomes part of the candidate's profile when scoring.
+                </p>
+              </TabsContent>
+
+              <TabsContent value="sheet" className="space-y-3 pt-4">
+                <Label htmlFor="sheet-search">Find a spreadsheet</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="sheet-search"
+                    data-testid="input-sheet-search"
+                    placeholder="Search by name"
+                    value={sheetSearch}
+                    onChange={(e) => setSheetSearch(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") searchSheets();
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    onClick={searchSheets}
+                    disabled={sheetsLoading}
+                    variant="outline"
+                    data-testid="button-search-sheets"
+                  >
+                    {sheetsLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Search className="h-4 w-4" />
+                    )}
+                  </Button>
+                </div>
+                {sheets.length > 0 && (
+                  <div className="border border-border rounded-md max-h-48 overflow-y-auto">
+                    {sheets.map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => pickSheet(s)}
+                        data-testid={`button-pick-sheet-${s.id}`}
+                        className={`w-full text-left px-3 py-2 text-sm hover-elevate border-b last:border-b-0 border-border ${
+                          pickedSheet?.id === s.id ? "bg-accent" : ""
+                        }`}
+                      >
+                        <div className="font-medium truncate">{s.name}</div>
+                        <div className="text-xs text-muted-foreground truncate">{s.id}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {pickedSheet && (
+                  <div>
+                    <Label className="mt-2">Worksheet (tab)</Label>
+                    <select
+                      data-testid="select-tab"
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                      value={pickedTab}
+                      onChange={(e) => setPickedTab(e.target.value)}
+                    >
+                      <option value="">— pick a tab —</option>
+                      {extractTabs(sheetInfo).map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Score + Reason will be appended to the right of this sheet's existing columns.
+                    </p>
+                  </div>
+                )}
+              </TabsContent>
+            </Tabs>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Pre-run review: uncategorized files */}
+      {uncategorized.length > 0 && (
+        <Card className="mt-6 border-amber-500/50 dark:border-amber-400/40">
+          <CardContent className="p-5">
+            <div className="font-medium mb-1 inline-flex items-center gap-2 text-amber-700 dark:text-amber-400">
+              <AlertCircle className="h-4 w-4" />
+              {uncategorized.length} file{uncategorized.length === 1 ? "" : "s"} need
+              {uncategorized.length === 1 ? "s" : ""} a category
+            </div>
+            <p className="text-sm text-muted-foreground mb-3">
+              We couldn't auto-detect a category from these filenames. Pick one for each — your
+              choices are remembered for next time.
+            </p>
+            <ul className="space-y-2">
+              {uncategorized.map((f) => (
+                <FileRow key={f.fileId} file={f} setCategory={setCategory} />
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Categorized list (collapsed-ish summary) */}
+      {categorized.length > 0 && (
+        <Card className="mt-6">
+          <CardContent className="p-5">
+            <div className="font-medium mb-3">Categorized files ({categorized.length})</div>
+            <ul className="space-y-1.5">
+              {categorized.map((f) => (
+                <FileRow key={f.fileId} file={f} setCategory={setCategory} />
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="mt-6 flex justify-end">
+        <Button
+          size="lg"
+          onClick={startRun}
+          disabled={submitting || uncategorized.length > 0 || !roleId}
+          data-testid="button-start-scoring"
+          className="gap-2"
+        >
+          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+          Start scoring
+          <ArrowRight className="h-4 w-4" />
+        </Button>
+      </div>
+    </AppShell>
+  );
+}
+
+function CountRow({ label, count }: { label: string; count: number }) {
+  const has = count > 0;
+  return (
+    <div className="flex items-center gap-2">
+      {has ? (
+        <CheckCircle2 className="h-4 w-4 text-primary" />
+      ) : (
+        <AlertCircle className="h-4 w-4 text-muted-foreground" />
+      )}
+      <span className={has ? "" : "text-muted-foreground"}>
+        {label} <span className="text-muted-foreground">({count})</span>
+      </span>
+    </div>
+  );
+}
+
+function FileRow({
+  file,
+  setCategory,
+}: {
+  file: PreviewFile;
+  setCategory: (fileId: string, category: string) => void;
+}) {
+  return (
+    <li className="flex items-center gap-2 text-sm">
+      <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+      {file.webViewLink ? (
+        <a
+          href={file.webViewLink}
+          target="_blank"
+          rel="noreferrer"
+          className="truncate hover:underline flex-1 min-w-0"
+          data-testid={`link-file-${file.fileId}`}
+        >
+          {file.fileName}
+        </a>
+      ) : (
+        <span className="truncate flex-1 min-w-0">{file.fileName}</span>
+      )}
+      <select
+        data-testid={`select-cat-${file.fileId}`}
+        className="h-8 px-2 rounded border border-input bg-background text-xs shrink-0"
+        value={file.category ?? ""}
+        onChange={(e) => setCategory(file.fileId, e.target.value || "auto")}
+      >
+        <option value="">— Needs a category —</option>
+        {CATEGORIES.map((c) => (
+          <option key={c} value={c}>
+            {CATEGORY_LABEL[c]}
+            {file.autoDetected && file.category === c ? " (auto)" : ""}
+          </option>
+        ))}
+        <option value="auto">Reset to auto-detect</option>
+      </select>
+    </li>
+  );
+}
