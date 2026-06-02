@@ -1,13 +1,3 @@
----
-title: Candidate Scorer
-emoji: 🤖
-colorFrom: purple
-colorTo: blue
-sdk: docker
-app_port: 7860
-pinned: false
----
-
 # Candidate Scorer
 
 AI-powered candidate scoring for technical recruiting workflows.
@@ -22,17 +12,16 @@ Built to replace the manual "open every LinkedIn profile, cross-reference the ru
 
 - **Reads candidates from a Google Sheet.** Drop a sheet ID into the role config; the app pulls every row and treats it as a candidate.
 - **Pulls per-role context from Google Drive.** Point a role at a Drive folder. The app categorizes every file by filename keyword into nine buckets — `jd`, `hm_notes`, `rubrik`, `hired`, `not_hired`, `transcripts`, `scorecards`, `incumbents`, `benchmark_candidates` — and assembles them into a single context object the scorer consumes.
-- **Scores every candidate 1–5 against the rubric.** First pass uses Claude Sonnet 4.6 for cost and throughput. Output is structured: `{score, reason, totalYoe}`.
-- **Two-pass review for borderline candidates.** A one-click "Re-score borderline (Opus)" button on completed runs re-runs every score of 2, 3, or 4 through Claude Opus 4.7, stores the original Sonnet score so the diff is visible, and writes only the changed rows back to the Sheet. The rest of the run is untouched.
+- **Scores every candidate 1–5 against the rubric.** First pass uses `claude-sonnet-4-6` for cost and throughput. Output is structured: `{score, reason, totalYoe}`.
+- **Two-pass review for borderline candidates.** A one-click "Re-score borderline (Opus)" button on completed runs re-runs every score of 2, 3, or 4 through `claude-opus-4-7`, stores the original Sonnet score so the diff is visible, and writes only the changed rows back to the Sheet.
 - **Per-role calibration feedback.** Thumbs up/down, free-text notes, and manual score overrides on any candidate row are stored against the role and injected into the next run's prompt so the model learns the recruiter's taste over time.
-- **Deterministic rules baked into the prompt.** A few rules are too high-stakes to leave to model judgment, so they're enforced explicitly:
-  - **Insufficient Data** — if both the About and Experience sections are near-empty, auto-score 1 with reason "Insufficient Data".
-  - **Duration at Company** — if the candidate's current company end date is more than six months before today, auto-score 1 with reason "Duration at Company".
+- **Deterministic rules baked into the prompt:**
+  - **Insufficient Data** — if both the About and Experience sections are near-empty, auto-score 1 with reason `"Insufficient Data"`.
+  - **Duration at Company** — if the candidate's current company end date is more than six months before today, auto-score 1 with reason `"Duration at Company"`.
   - **Education inference** — a Master's or PhD implies a Bachelor's; never flag those candidates as missing a Bachelor's requirement.
-  - **Total YOE** rounded to two decimals; **YAC** is current-company-only and distinct from Total YOE.
-- **Standardized export.** One CSV/Sheet column template across every role: LinkedIn URL, name, current company + dates, previous company (title only), education, candidate location, LinkedIn ID, Total YOE, AI Score, AI Reasoning. No per-role drift.
-- **Legacy file support.** Parses `.docx`, `.pdf`, native Google Docs, and legacy `.doc` (via `word-extractor`).
-- **Mid-run resilience.** Job state is persisted to SQLite, and a startup sweep flags any jobs left in `running` state after a restart so the UI never shows a stuck job.
+  - **Total YOE** rounded to two decimals; **YAC** (Years At Company) is current-company-only and distinct from Total YOE.
+- **Standardized export.** One CSV/Sheet column template across every role. Export is restricted to Company1 and Company2 candidates only.
+- **Legacy file support.** Parses `.docx`, `.pdf`, native Google Docs, and legacy `.doc`.
 
 ---
 
@@ -43,76 +32,134 @@ client/        React + Vite frontend (job view, manage roles, calibration UI)
 server/        Express server
   scorer.ts    LLM prompt construction + scoring pipeline (single + batch)
   routes.ts    REST endpoints (jobs, roles, calibration feedback, rescore)
-  external.ts  Google Drive + Sheets fetchers, file categorization, doc parsers
-  storage.ts   Drizzle SQLite storage layer
-shared/        Zod schemas and the export column template shared by client + server
+  external.ts  Google Drive + Sheets fetchers via googleapis service account
+  storage.ts   Async Drizzle/Postgres storage layer
+  auth.ts      ADMIN_API_KEY bearer-token middleware
+shared/        Zod schemas and export column template shared by client + server
+migrations/    Drizzle-generated Postgres DDL migrations
 ```
-
-### Key design decisions
-
-- **One shared schema in `shared/schema.ts`.** Drizzle table definitions plus Zod insert/select schemas live in one file so client and server can't drift.
-- **Storage interface, not direct DB calls.** Routes only talk to the `IStorage` interface in `server/storage.ts`. Swappable for Postgres or any other backing store without touching route code.
-- **Background work returns immediately.** Long operations (loading Drive context, batch scoring, two-pass rescoring) respond with a job ID and then run in a background async loop, persisting progress to the DB. The frontend polls. No multi-second blocking POSTs.
-- **Prompt order is fixed.** Role intro → today's date and the six-months-ago cutoff → YOE computation rules → education inference → Insufficient Data rule → Duration at Company rule → reference materials → calibration notes → scoring scale → output format. Each section is generated by a discrete function in `scorer.ts`, so adding a new rule is one function and one line in `buildSystemPrompt()`.
-- **No hidden state in the model.** Auto-1 rules are evaluated by the model but the prompt forces it to use exact reason strings ("Insufficient Data" / "Duration at Company") so downstream filtering is deterministic.
 
 ---
 
 ## Stack
 
-- **Backend:** Node.js, Express, TypeScript, SQLite via `better-sqlite3` and Drizzle ORM
-- **Frontend:** React, Vite, Tailwind CSS, shadcn/ui, wouter, TanStack Query
-- **External services:** Google Drive (role context files), Google Sheets (candidate input and writeback), Anthropic Claude (Sonnet 4.6 first pass, Opus 4.7 second pass)
-- **Doc parsing:** `pdf-parse`, `mammoth` (docx), `word-extractor` (legacy doc), Google Docs API for native Docs
+- **Backend:** Node.js, Express 5, TypeScript, Neon Postgres via `postgres.js` + Drizzle ORM
+- **Frontend:** React 18, Vite, Tailwind CSS, shadcn/ui, wouter, TanStack Query
+- **AI:** Anthropic Claude (`claude-sonnet-4-6` first pass, `claude-opus-4-7` rescore)
+- **Google:** Drive v3 + Sheets v4 + Docs v1 via service account (`googleapis`)
+- **Security:** `helmet` security headers, `ADMIN_API_KEY` bearer-token auth on all `/api/*` routes
+- **Deployment:** Render Web Service + Neon Postgres
 
 ---
 
-## Setup
+## Local development
+
+### Prerequisites
+
+- Node.js 20+
+- A Postgres database (local or [Neon](https://neon.tech))
+- Anthropic API key
+- Google service account with Drive, Sheets, and Docs APIs enabled
+
+### Setup
 
 ```bash
-npm install
-npm run dev                          # Vite + Express on the same port
-npm run build                        # bundles to dist/public + dist/index.cjs
-NODE_ENV=production node dist/index.cjs
+git clone https://github.com/BatmanRecruiter/Candidate-Scorer
+cd Candidate-Scorer
+npm ci
+cp .env.example .env
+# fill in .env — see Environment variables below
+npm run db:migrate
+npm run dev
 ```
 
-### Environment
+The dev server starts on `http://localhost:5000` (or `PORT` from `.env`).
 
-The app expects credentials for:
+`ADMIN_API_KEY` is optional locally — if unset, auth is skipped entirely.
 
-- Anthropic API (Claude Sonnet 4.6 + Opus 4.7)
-- Google Drive (read role context folders)
-- Google Sheets (read candidate input, write scoring results back)
+---
 
-In this repo, all three calls route through a host-platform credential layer. When porting to a standalone deployment, swap them for direct `@anthropic-ai/sdk` and `googleapis` clients with OAuth or service-account credentials in `.env`.
+## Environment variables
+
+See `.env.example` for the full annotated list. Required for production:
+
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | Neon (or any Postgres) connection string |
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `GOOGLE_SERVICE_ACCOUNT_EMAIL` | Service account `client_email` from JSON key |
+| `GOOGLE_PRIVATE_KEY` | Service account `private_key` (literal `\n` sequences — the app converts them at runtime) |
+| `ADMIN_API_KEY` | Bearer token required for all `/api/*` routes except `/api/health` |
+| `NODE_ENV` | `production` on Render |
+| `PORT` | HTTP port (Render sets this automatically) |
+
+---
+
+## Google service account setup
+
+1. In Google Cloud Console, create a service account and download a JSON key.
+2. Enable the **Drive API**, **Sheets API**, and **Docs API** for your project.
+3. Share target Drive folders with the service account email (Viewer); share Sheets you write scores to (Editor).
+4. Set `GOOGLE_SERVICE_ACCOUNT_EMAIL` to `client_email` and `GOOGLE_PRIVATE_KEY` to `private_key` from the JSON key.
+5. **Never commit the JSON key file.** `.gitignore` blocks `*-service-account.json`, `service-account.json`, and `google-credentials.json`.
+
+---
+
+## Database migrations
+
+Migrations live in `migrations/` and are managed by Drizzle Kit.
+
+```bash
+# Generate a new migration after editing shared/schema.ts
+npm run db:generate
+
+# Apply pending migrations to DATABASE_URL
+npm run db:migrate
+```
+
+On Render the start command runs `npm run db:migrate && npm start` automatically on every deploy.
+
+---
+
+## Deploying to Render
+
+1. Push the repo to GitHub.
+2. Create a new **Web Service** in Render connected to the repo.
+3. Render detects `render.yaml` and pre-fills the service config.
+4. Set the secret env vars in the Render dashboard: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`, `ADMIN_API_KEY`.
+5. Deploy. Build runs `npm ci && npm run build`; start runs `npm run db:migrate && npm start`.
+6. Health check endpoint: `GET /api/health` (no auth required).
+
+### Neon database setup
+
+1. Create a project at [neon.tech](https://neon.tech).
+2. Copy the pooled connection string from the Neon dashboard.
+3. Set it as `DATABASE_URL` on Render (and locally in `.env`).
 
 ---
 
 ## Usage
 
-1. Create a role. Give it a name and a Google Drive folder ID.
-2. The app categorizes every file in that folder into the nine context buckets by filename keyword. Edit the role to see the breakdown.
-3. Start a scoring job by pasting a Google Sheet ID with candidate rows.
+1. Create a role — give it a name and a Google Drive folder ID.
+2. The app categorizes every file in that folder into the nine context buckets by filename keyword.
+3. Start a scoring job by pasting a Google Sheet ID with candidate rows (or upload a CSV).
 4. The job runs first-pass Sonnet scoring, writes results back to the Sheet, and surfaces a candidate list in the UI.
 5. Review the run. Drop thumbs up/down, notes, or score overrides on rows that look wrong — these become calibration feedback for the next run.
-6. If you want a tighter read on the borderline candidates, click "Re-score borderline (Opus)". The 2/3/4 candidates re-run through Opus 4.7 and only the changed rows get written back.
+6. Click "Re-score borderline (Opus)" to re-run 2/3/4 candidates through Opus 4.7. Only changed rows are written back.
 
 ---
 
-## Notes for readers
+## Notes
 
-- `rubrik` is the project's chosen spelling for the rubric category throughout the app — it's intentional, not a typo.
-- The export drops Company3 and Company4 entirely. Final columns end with Total YOE, AI Score, AI Reasoning.
+- `rubrik` is the project's chosen spelling for the rubric category throughout the app — intentional, not a typo.
+- The export drops Company3 and Company4 entirely.
 - YAC (Years At Company) is current-company-only. Total YOE is everything.
 
 ---
 
-## Roadmap
+## npm audit note
 
-- Direct Anthropic + Google client adapters so the repo runs standalone without the host platform's credential layer
-- Postgres storage adapter
-- Configurable rubric weights per role
-- Bulk calibration import from past hiring decisions
+`googleapis@146` depends on `uuid@9` via `gaxios`, which has a known low-severity vulnerability. `npm audit fix` was not applied because the fix requires upgrading to `googleapis@173` (breaking major version). Monitor upstream for a patch release.
 
 ---
 
