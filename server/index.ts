@@ -1,8 +1,10 @@
 import "dotenv/config";
-import express, { Response, NextFunction } from 'express';
-import type { Request } from 'express';
+import express, { Response, NextFunction } from "express";
+import type { Request } from "express";
+import helmet from "helmet";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
+import { requireAuth } from "./auth";
 import { createServer } from "node:http";
 import { storage } from "./storage";
 
@@ -14,6 +16,26 @@ declare module "http" {
     rawBody: unknown;
   }
 }
+
+// Security headers
+app.use(
+  helmet({
+    // CSP is relaxed for the React SPA (inline styles from Tailwind/Radix).
+    // Tighten this once you know all the required sources.
+    contentSecurityPolicy:
+      process.env.NODE_ENV === "production"
+        ? {
+            directives: {
+              defaultSrc: ["'self'"],
+              scriptSrc: ["'self'"],
+              styleSrc: ["'self'", "'unsafe-inline'"],
+              imgSrc: ["'self'", "data:", "https:"],
+              connectSrc: ["'self'"],
+            },
+          }
+        : false,
+  }),
+);
 
 app.use(
   express.json({
@@ -32,7 +54,6 @@ export function log(message: string, source = "express") {
     second: "2-digit",
     hour12: true,
   });
-
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
@@ -51,10 +72,7 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
+      if (capturedJsonResponse) logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       log(logLine);
     }
   });
@@ -62,17 +80,18 @@ app.use((req, res, next) => {
   next();
 });
 
+// Protect all /api/* routes except /api/health (used by Render's health check).
+app.use("/api", (req, res, next) => {
+  if (req.path === "/health") return next();
+  requireAuth(req, res, next);
+});
+
 (async () => {
-  // Sweep any jobs left in "running" status from a previous process. They
-  // can't actually be running on this fresh process, so mark them failed so
-  // the UI stops showing fake progress.
+  // Mark any jobs that were "running" when the previous process died as failed.
   try {
-    const stranded = storage.listJobs(100).filter((j) => j.status === "running");
+    const stranded = (await storage.listJobs(100)).filter((j) => j.status === "running");
     for (const j of stranded) {
-      storage.updateJob(j.id, {
-        status: "failed",
-        error: "Server restarted mid-run",
-      });
+      await storage.updateJob(j.id, { status: "failed", error: "Server restarted mid-run" });
       log(`marked stranded job ${j.id} as failed on boot`);
     }
   } catch (e) {
@@ -84,19 +103,11 @@ app.use((req, res, next) => {
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
-
     console.error("Internal Server Error:", err);
-
-    if (res.headersSent) {
-      return next(err);
-    }
-
+    if (res.headersSent) return next(err);
     return res.status(status).json({ message });
   });
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
   if (process.env.NODE_ENV === "production") {
     serveStatic(app);
   } else {
@@ -104,17 +115,9 @@ app.use((req, res, next) => {
     await setupVite(httpServer, app);
   }
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
   httpServer.listen(
-    {
-      port,
-      host: "0.0.0.0",
-      reusePort: true,
-    },
+    { port, host: "0.0.0.0", reusePort: true },
     () => {
       log(`serving on port ${port}`);
     },

@@ -78,13 +78,14 @@ function parseOverrides(s: string | null | undefined): Record<string, Category> 
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  // /api/health is intentionally unprotected — Render uses it for health checks.
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
   // -------------------------------------------------------------------------
   // Roles CRUD
   // -------------------------------------------------------------------------
-  app.get("/api/roles", (_req, res) => {
-    const rows = storage.listRoles();
+  app.get("/api/roles", async (_req, res) => {
+    const rows = await storage.listRoles();
     res.json({
       roles: rows.map((r) => ({
         roleId: r.roleId,
@@ -94,24 +95,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     });
   });
 
-  app.post("/api/roles", (req: Request, res: Response) => {
+  app.post("/api/roles", async (req: Request, res: Response) => {
     try {
       const roleId = String(req.body.roleId || "").trim();
       const roleName = String(req.body.roleName || "").trim();
       if (!roleId) return res.status(400).json({ message: "roleId required" });
       if (!roleName) return res.status(400).json({ message: "roleName required" });
-      // Validate role ID: anything goes as long as it doesn't contain reserved
-      // separator characters that would confuse parsing.
       if (!/^[A-Za-z0-9_\-]+$/.test(roleId)) {
         return res.status(400).json({
           message: "roleId can only contain letters, numbers, hyphens, and underscores",
         });
       }
-      const existing = storage.getRole(roleId);
+      const existing = await storage.getRole(roleId);
       if (existing) {
         return res.status(409).json({ message: `Role ID "${roleId}" already exists` });
       }
-      const created = storage.createRole({
+      const created = await storage.createRole({
         roleId,
         roleName,
         fileCategoryOverrides: "{}",
@@ -123,8 +122,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  app.get("/api/roles/:id", (req, res) => {
-    const role = storage.getRole(req.params.id);
+  app.get("/api/roles/:id", async (req, res) => {
+    const role = await storage.getRole(req.params.id);
     if (!role) return res.status(404).json({ message: "Role not found" });
     res.json({
       role: {
@@ -136,24 +135,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     });
   });
 
-  app.patch("/api/roles/:id", (req, res) => {
-    const role = storage.getRole(req.params.id);
+  app.patch("/api/roles/:id", async (req, res) => {
+    const role = await storage.getRole(req.params.id);
     if (!role) return res.status(404).json({ message: "Role not found" });
     const patch: any = {};
     if (req.body.roleName) patch.roleName = String(req.body.roleName);
-    const updated = storage.updateRole(req.params.id, patch);
+    const updated = await storage.updateRole(req.params.id, patch);
     res.json({ role: updated });
   });
 
-  app.delete("/api/roles/:id", (req, res) => {
-    storage.deleteRole(req.params.id);
+  app.delete("/api/roles/:id", async (req, res) => {
+    await storage.deleteRole(req.params.id);
     res.json({ ok: true });
   });
 
-  // Set / update a category override for a single file under a role
-  app.post("/api/roles/:id/categorize", (req: Request, res: Response) => {
+  app.post("/api/roles/:id/categorize", async (req: Request, res: Response) => {
     const idParam = String(req.params.id);
-    const role = storage.getRole(idParam);
+    const role = await storage.getRole(idParam);
     if (!role) return res.status(404).json({ message: "Role not found" });
     const fileId = String(req.body.fileId || "").trim();
     const category = String(req.body.category || "").trim();
@@ -166,23 +164,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } else {
       return res.status(400).json({ message: `Invalid category "${category}"` });
     }
-    const updated = storage.updateRole(idParam, {
+    const updated = await storage.updateRole(idParam, {
       fileCategoryOverrides: JSON.stringify(overrides),
     });
     res.json({ role: updated, overrides });
   });
 
-  // Preview: categorize all files for this role without reading their content.
-  // Cheaper than /preview-with-content; used by the pre-run review screen.
   app.post("/api/roles/:id/preview", async (req: Request, res: Response) => {
     try {
-      const role = storage.getRole(String(req.params.id));
+      const role = await storage.getRole(String(req.params.id));
       if (!role) return res.status(404).json({ message: "Role not found" });
       const raw = await discoverFilesForRole(role.roleId);
       const overrides = parseOverrides(role.fileCategoryOverrides);
       const categorized = categorizeFiles(role.roleId, raw, overrides);
 
-      // Stale-override cleanup: if a file no longer exists, drop its override
       const liveIds = new Set(raw.map((f) => f.fileId));
       let cleanedOverrides = { ...overrides };
       let mutated = false;
@@ -193,7 +188,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
       }
       if (mutated) {
-        storage.updateRole(role.roleId, {
+        await storage.updateRole(role.roleId, {
           fileCategoryOverrides: JSON.stringify(cleanedOverrides),
         });
       }
@@ -211,11 +206,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  // Full preview: discover + categorize + READ content. Returns the summary
-  // used by the new-run page before submitting.
   app.post("/api/roles/:id/context", async (req: Request, res: Response) => {
     try {
-      const role = storage.getRole(String(req.params.id));
+      const role = await storage.getRole(String(req.params.id));
       if (!role) return res.status(404).json({ message: "Role not found" });
       const overrides = parseOverrides(role.fileCategoryOverrides);
       const { hits, files } = await loadRoleContext(role.roleId, overrides);
@@ -257,7 +250,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const roleIdRaw = String(req.body.roleId || "").trim();
       if (!roleIdRaw) return res.status(400).json({ message: "roleId required" });
-      const role = storage.getRole(roleIdRaw);
+      const role = await storage.getRole(roleIdRaw);
       if (!role) return res.status(400).json({ message: `Role "${roleIdRaw}" not found` });
 
       const sheetId = req.body.sheetId ? String(req.body.sheetId) : null;
@@ -292,17 +285,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ message: "Batch size exceeds 500" });
       }
 
-      // Create the job placeholder immediately and respond so the UI can navigate
-      // to the run page right away. Loading Drive context can take 30+ seconds for
-      // roles with many files, and we don't want the browser to hang on the POST.
       const jobId = nanoid(10);
       const now = Date.now();
-      const placeholderSummary = { status: "loading_context" };
-      storage.createJob({
+      await storage.createJob({
         id: jobId,
         roleId: role.roleId,
         roleName: role.roleName,
-        contextSummary: JSON.stringify(placeholderSummary),
+        contextSummary: JSON.stringify({ status: "loading_context" }),
         status: "running",
         totalCandidates: candidateRows.length,
         completedCandidates: 0,
@@ -317,19 +306,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         updatedAt: now,
       });
 
-      // Respond immediately so the client can navigate.
       res.json({ jobId });
 
-      // Now do the slow work in the background: load role context, snapshot
-      // calibration, and run the scoring loop.
       (async () => {
         try {
           const overrides = parseOverrides(role.fileCategoryOverrides);
           const { hits, files } = await loadRoleContext(role.roleId, overrides);
           const baseSummary = buildSummary(files, hits);
 
-          const calibrationRows = storage.listFeedbackForRole(role.roleId, 50);
-          const calibrationNotes = buildCalibrationNotes(role.roleId);
+          const calibrationRows = await storage.listFeedbackForRole(role.roleId, 50);
+          const calibrationNotes = await buildCalibrationNotes(role.roleId);
           const calibrationApplied = {
             count: calibrationNotes.length,
             totalChars: calibrationNotes.reduce((n, s) => n + s.length, 0),
@@ -337,7 +323,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             feedbackIds: calibrationRows.slice(0, calibrationNotes.length).map((r) => r.id),
           };
           const contextSummary = { ...baseSummary, calibrationApplied };
-          storage.updateJob(jobId, { contextSummary: JSON.stringify(contextSummary) });
+          await storage.updateJob(jobId, { contextSummary: JSON.stringify(contextSummary) });
 
           await runScoringJob({
             jobId,
@@ -351,7 +337,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           });
         } catch (e: any) {
           console.error(`Job ${jobId} crashed:`, e);
-          storage.updateJob(jobId, { status: "failed", error: String(e?.message ?? e) });
+          await storage.updateJob(jobId, { status: "failed", error: String(e?.message ?? e) });
         }
       })();
 
@@ -364,8 +350,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // -------------------------------------------------------------------------
   // Poll job
-  app.get("/api/jobs/:id", (req, res) => {
-    const job = storage.getJob(req.params.id);
+  app.get("/api/jobs/:id", async (req, res) => {
+    const job = await storage.getJob(req.params.id);
     if (!job) return res.status(404).json({ message: "Job not found" });
     return res.json({
       id: job.id,
@@ -388,25 +374,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // -------------------------------------------------------------------------
   // Two-pass scoring: re-score borderline candidates (score 2/3/4) with Opus.
-  // Cheap candidates (1s and 5s) stay on the Sonnet pass. The button on the
-  // run page triggers this. Responds immediately with the count being rescored
-  // and runs in the background; the run page polls /api/jobs/:id to see
-  // updated rows and the rescoreStatus field on contextSummary.
   // -------------------------------------------------------------------------
   app.post("/api/jobs/:id/rescore-borderline", async (req, res) => {
-    const job = storage.getJob(req.params.id);
+    const job = await storage.getJob(req.params.id);
     if (!job) return res.status(404).json({ message: "Job not found" });
     if (job.status !== "completed") {
       return res.status(400).json({ message: "Job must be completed before rescoring" });
     }
     let summary: any = {};
     try { summary = JSON.parse(job.contextSummary || "{}"); } catch {}
-    if (summary.rescoreStatus && summary.rescoreStatus.status === "running") {
+    if (summary.rescoreStatus?.status === "running") {
       return res.status(409).json({ message: "A rescore is already in progress for this job" });
     }
 
     const allResults: ScoreResult[] = JSON.parse(job.results);
-    // Borderline = score 2, 3, or 4 that wasn't already rescored by Opus.
     const borderline = allResults.filter(
       (r) => !r.error && (r.score === 2 || r.score === 3 || r.score === 4) && r.scoredBy !== "opus",
     );
@@ -424,15 +405,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       changedCount: 0,
       startedAt: Date.now(),
     };
-    storage.updateJob(job.id, { contextSummary: JSON.stringify(summary) });
+    await storage.updateJob(job.id, { contextSummary: JSON.stringify(summary) });
 
     res.json({ jobId: job.id, rescoreCount: borderline.length });
 
     (async () => {
       try {
-        // Rebuild role context from the role's current Drive files. This means
-        // a rescore picks up any file additions/edits since the original run.
-        const role = storage.getRole(job.roleId!);
+        const role = await storage.getRole(job.roleId!);
         if (!role) throw new Error("role not found for job");
         const overrides = parseOverrides(role.fileCategoryOverrides);
         const { hits } = await loadRoleContext(role.roleId, overrides);
@@ -447,10 +426,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           scorecards: hits.scorecards,
           incumbents: hits.incumbents,
           benchmarkCandidates: hits.benchmark_candidates,
-          calibrationNotes: buildCalibrationNotes(role.roleId),
+          calibrationNotes: await buildCalibrationNotes(role.roleId),
         };
 
-        // Index results by rowIndex for in-place updates.
         const byRow = new Map<number, ScoreResult>();
         for (const r of allResults) byRow.set(r.rowIndex, r);
 
@@ -458,14 +436,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         let failed = 0;
         let changedCount = 0;
 
-        const persist = () => {
-          summary.rescoreStatus = {
-            ...summary.rescoreStatus,
-            completed,
-            failed,
-            changedCount,
-          };
-          storage.updateJob(job.id, {
+        const persist = async () => {
+          summary.rescoreStatus = { ...summary.rescoreStatus, completed, failed, changedCount };
+          await storage.updateJob(job.id, {
             contextSummary: JSON.stringify(summary),
             results: JSON.stringify(Array.from(byRow.values())),
           });
@@ -480,15 +453,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               const out = await scoreCandidate(ctx, candidate, OPUS_MODEL);
               const prev = byRow.get(r.rowIndex)!;
               const originalScore = prev.score;
-              const updated: ScoreResult = {
+              byRow.set(r.rowIndex, {
                 ...prev,
                 score: out.score,
                 reason: out.reason,
                 totalYoe: out.totalYoe ?? prev.totalYoe ?? null,
                 scoredBy: "opus",
                 originalScore,
-              };
-              byRow.set(r.rowIndex, updated);
+              });
               if (out.score !== originalScore) changedCount++;
               completed++;
             } catch (e) {
@@ -496,22 +468,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               console.error(`Opus rescore failed for row ${r.rowIndex}:`, e);
             }
           },
-          persist,
+          () => { persist().catch(console.error); },
         );
 
-        // Optional Sheet writeback: only the rescored rows so we don't churn
-        // unchanged rows. Same 3-column layout (Total YOE | AI Score | AI Reasoning).
         let writebackError: string | null = null;
         if (job.sheetId && job.sheetName) {
           try {
             const rescoredRows = Array.from(byRow.values())
               .filter((r) => r.scoredBy === "opus" && !r.error)
-              .map((r) => ({
-                rowIndex: r.rowIndex,
-                score: r.score,
-                reason: r.reason,
-                totalYoe: r.totalYoe ?? null,
-              }));
+              .map((r) => ({ rowIndex: r.rowIndex, score: r.score, reason: r.reason, totalYoe: r.totalYoe ?? null }));
             if (rescoredRows.length) {
               const headerCount = job.inputHeaders ? safeJsonArray(job.inputHeaders).length : 0;
               await writeScoresToSheet({
@@ -535,7 +500,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           finishedAt: Date.now(),
           writebackError,
         };
-        storage.updateJob(job.id, {
+        await storage.updateJob(job.id, {
           contextSummary: JSON.stringify(summary),
           results: JSON.stringify(Array.from(byRow.values())),
         });
@@ -548,38 +513,35 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             error: String(e?.message ?? e),
             finishedAt: Date.now(),
           };
-          storage.updateJob(job.id, { contextSummary: JSON.stringify(summary) });
+          await storage.updateJob(job.id, { contextSummary: JSON.stringify(summary) });
         } catch {}
       }
     })();
   });
 
-  app.get("/api/jobs", (_req, res) => {
-    // Use the lightweight projection — Past Runs only needs 7 small fields,
-    // not the full results JSON blob (which can be megabytes per job).
-    const jobs = storage.listJobsSummary().map((j) => ({
-      id: j.id,
-      roleName: j.roleName,
-      status: j.status,
-      total: j.totalCandidates,
-      completed: j.completedCandidates,
-      failed: j.failedCandidates,
-      createdAt: j.createdAt,
-    }));
-    res.json({ jobs });
+  app.get("/api/jobs", async (_req, res) => {
+    const jobList = await storage.listJobsSummary();
+    res.json({
+      jobs: jobList.map((j) => ({
+        id: j.id,
+        roleName: j.roleName,
+        status: j.status,
+        total: j.totalCandidates,
+        completed: j.completedCandidates,
+        failed: j.failedCandidates,
+        createdAt: j.createdAt,
+      })),
+    });
   });
 
-  app.get("/api/jobs/:id/csv", (req, res) => {
-    const job = storage.getJob(req.params.id);
+  app.get("/api/jobs/:id/csv", async (req, res) => {
+    const job = await storage.getJob(req.params.id);
     if (!job) return res.status(404).send("Not found");
     const results: ScoreResult[] = JSON.parse(job.results);
     const sorted = results.slice().sort((a, b) => a.rowIndex - b.rowIndex);
 
-    const originalHeaders: string[] = job.inputHeaders
-      ? safeJsonArray(job.inputHeaders)
-      : [];
+    const originalHeaders: string[] = job.inputHeaders ? safeJsonArray(job.inputHeaders) : [];
     const seen = new Set<string>(originalHeaders.map((h) => h.toLowerCase()));
-
     for (const r of sorted) {
       for (const k of Object.keys(r.fields || {})) {
         if (!seen.has(k.toLowerCase())) {
@@ -589,10 +551,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
     }
 
-    // Map the standard template to this run's input columns once.
     const templateMap = mapTemplateToInputs(originalHeaders);
-
-    // Header row: "Blank" cells export as empty strings.
     const headerRow = COLUMN_TEMPLATE.map((h) => (isBlankHeader(h) ? "" : h));
     const lines = [headerRow.map(csvCell).join(",")];
 
@@ -607,15 +566,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           return formatTemplateCell(tmpl, String(r.totalYoe), fields);
         }
         const inputCol = templateMap[i];
-        let raw: string = "";
+        let raw = "";
         if (inputCol) {
           const exact = fields[inputCol];
           if (exact != null) {
             raw = String(exact);
           } else {
-            const key = Object.keys(fields).find(
-              (k) => k.toLowerCase() === inputCol.toLowerCase(),
-            );
+            const key = Object.keys(fields).find((k) => k.toLowerCase() === inputCol.toLowerCase());
             raw = key ? String(fields[key] ?? "") : "";
           }
         }
@@ -634,12 +591,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // -------------------------------------------------------------------------
   // Calibration feedback
   // -------------------------------------------------------------------------
-
-  // POST per-candidate feedback. Body: { roleId, candidateUrl, candidateName,
-  // candidateSummary, jobId?, aiScore, aiReason, thumb: 'up'|'down',
-  // scoreOverride?: 1-5|null, note?: string }. Re-submitting for the same
-  // (roleId, candidateUrl) updates the existing row.
-  app.post("/api/feedback", (req: Request, res: Response) => {
+  app.post("/api/feedback", async (req: Request, res: Response) => {
     try {
       const body = req.body || {};
       const roleId = String(body.roleId || "").trim();
@@ -648,7 +600,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!roleId || !candidateUrl || !thumb) {
         return res.status(400).json({ message: "roleId, candidateUrl, thumb required" });
       }
-      const role = storage.getRole(roleId);
+      const role = await storage.getRole(roleId);
       if (!role) return res.status(404).json({ message: `Role "${roleId}" not found` });
 
       let scoreOverride: number | null = null;
@@ -657,7 +609,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         if (Number.isFinite(n) && n >= 1 && n <= 5) scoreOverride = n;
       }
 
-      const row = storage.upsertFeedback({
+      const row = await storage.upsertFeedback({
         id: nanoid(10),
         roleId,
         candidateUrl,
@@ -678,37 +630,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  // List feedback for a role.
-  app.get("/api/roles/:id/feedback", (req, res) => {
+  app.get("/api/roles/:id/feedback", async (req, res) => {
     const roleId = req.params.id;
-    const role = storage.getRole(roleId);
+    const role = await storage.getRole(roleId);
     if (!role) return res.status(404).json({ message: "Role not found" });
-    return res.json({ feedback: storage.listFeedbackForRole(roleId) });
+    return res.json({ feedback: await storage.listFeedbackForRole(roleId) });
   });
 
-  // Get the existing feedback (if any) for a single candidate within a role.
-  app.get("/api/roles/:id/feedback/lookup", (req, res) => {
+  app.get("/api/roles/:id/feedback/lookup", async (req, res) => {
     const roleId = req.params.id;
     const url = String(req.query.candidateUrl || "").trim();
     if (!url) return res.json({ feedback: null });
-    const fb = storage.getFeedbackForRoleCandidate(roleId, url);
+    const fb = await storage.getFeedbackForRoleCandidate(roleId, url);
     return res.json({ feedback: fb || null });
   });
 
-  app.delete("/api/feedback/:id", (req, res) => {
-    storage.deleteFeedback(req.params.id);
+  app.delete("/api/feedback/:id", async (req, res) => {
+    await storage.deleteFeedback(req.params.id);
     return res.json({ ok: true });
   });
 
   return httpServer;
 }
 
-// Build the CALIBRATION_NOTES bucket for the system prompt. Each feedback row
-// becomes one short, structured paragraph the model can pattern-match on.
-// Capped to ~50 notes and ~30k chars so the prompt stays reasonable.
-function buildCalibrationNotes(roleId: string): string[] {
+// ---------------------------------------------------------------------------
+// Calibration notes builder (async — reads from storage)
+// ---------------------------------------------------------------------------
+
+async function buildCalibrationNotes(roleId: string): Promise<string[]> {
   if (!roleId) return [];
-  const rows = storage.listFeedbackForRole(roleId, 50);
+  const rows = await storage.listFeedbackForRole(roleId, 50);
   if (!rows.length) return [];
   const out: string[] = [];
   let totalChars = 0;
@@ -739,16 +690,8 @@ function buildCalibrationNotes(roleId: string): string[] {
 // ---------------------------------------------------------------------------
 
 const ZERO_COUNTS: Record<Category | "uncategorized", number> = {
-  jd: 0,
-  hm_notes: 0,
-  rubrik: 0,
-  hired: 0,
-  not_hired: 0,
-  transcripts: 0,
-  scorecards: 0,
-  incumbents: 0,
-  benchmark_candidates: 0,
-  uncategorized: 0,
+  jd: 0, hm_notes: 0, rubrik: 0, hired: 0, not_hired: 0,
+  transcripts: 0, scorecards: 0, incumbents: 0, benchmark_candidates: 0, uncategorized: 0,
 };
 
 function buildSummary(files: FileLoadInfo[], hits: CategoryHits) {
@@ -764,19 +707,11 @@ function buildSummary(files: FileLoadInfo[], hits: CategoryHits) {
     0,
   );
   return {
-    jd: registered.jd,
-    hm_notes: registered.hm_notes,
-    rubrik: registered.rubrik,
-    hired: registered.hired,
-    not_hired: registered.not_hired,
-    transcripts: registered.transcripts,
-    scorecards: registered.scorecards,
-    incumbents: registered.incumbents,
-    benchmark_candidates: registered.benchmark_candidates,
-    uncategorized: registered.uncategorized,
-    totalChars,
-    registered,
-    readable,
+    jd: registered.jd, hm_notes: registered.hm_notes, rubrik: registered.rubrik,
+    hired: registered.hired, not_hired: registered.not_hired,
+    transcripts: registered.transcripts, scorecards: registered.scorecards,
+    incumbents: registered.incumbents, benchmark_candidates: registered.benchmark_candidates,
+    uncategorized: registered.uncategorized, totalChars, registered, readable,
   };
 }
 
@@ -796,30 +731,21 @@ function csvCell(v: any): string {
 }
 
 function normalizeSheetList(res: any): Array<{ id: string; name: string }> {
+  if (res?.spreadsheets) return res.spreadsheets;
   const out: Array<{ id: string; name: string }> = [];
   function tryPush(o: any) {
     if (!o || typeof o !== "object") return;
-    const id = o.spreadsheetId || o.id || o.fileId || o.spreadsheet_id;
-    const name = o.name || o.title || o.spreadsheetTitle || o.displayName;
+    const id = o.spreadsheetId || o.id || o.fileId;
+    const name = o.name || o.title || o.spreadsheetTitle;
     if (id && name) out.push({ id: String(id), name: String(name) });
   }
   function walk(node: any) {
-    if (Array.isArray(node)) {
-      node.forEach(walk);
-      return;
-    }
-    if (node && typeof node === "object") {
-      tryPush(node);
-      for (const v of Object.values(node)) walk(v);
-    }
+    if (Array.isArray(node)) { node.forEach(walk); return; }
+    if (node && typeof node === "object") { tryPush(node); Object.values(node).forEach(walk); }
   }
   walk(res);
   const seen = new Set<string>();
-  return out.filter((o) => {
-    if (seen.has(o.id)) return false;
-    seen.add(o.id);
-    return true;
-  });
+  return out.filter((o) => { if (seen.has(o.id)) return false; seen.add(o.id); return true; });
 }
 
 // ---------------------------------------------------------------------------
@@ -848,16 +774,13 @@ async function runScoringJob(args: {
     scorecards: hits.scorecards,
     incumbents: hits.incumbents,
     benchmarkCandidates: hits.benchmark_candidates,
-    calibrationNotes: buildCalibrationNotes(roleId),
+    calibrationNotes: await buildCalibrationNotes(roleId),
   };
 
   const results: ScoreResult[] = [];
   let completed = 0;
   let failed = 0;
 
-  // Resolve a logical field (name/url/company/title) from a row of arbitrary
-  // headers. Tries each candidate in order: first exact case-insensitive match,
-  // then substring contains. Returns the first non-empty value found.
   const fieldKey = (row: Record<string, string>, candidates: string[]) => {
     const keys = Object.keys(row);
     const lcKeys = keys.map((k) => k.toLowerCase());
@@ -879,35 +802,10 @@ async function runScoringJob(args: {
     SCORE_CONCURRENCY,
     async (row, i) => {
       const candidate: CandidateInput = { rowIndex: i + 1, fields: row };
-      const name = fieldKey(row, [
-        "Candidate Name",
-        "Full Name",
-        "Name",
-        "Candidate",
-        "candidate_name",
-      ]);
-      const url = fieldKey(row, [
-        "Candidate LinkedIn URL",
-        "LinkedIn URL",
-        "LinkedIn",
-        "Profile URL",
-        "URL",
-        "profile_url",
-      ]);
-      const company = fieldKey(row, [
-        "Company1",
-        "Current Company",
-        "Company",
-        "company",
-      ]);
-      const title = fieldKey(row, [
-        "Company1 Title",
-        "Current Title",
-        "Candidate Profile Headline",
-        "Headline",
-        "Title",
-        "headline",
-      ]);
+      const name = fieldKey(row, ["Candidate Name", "Full Name", "Name", "Candidate", "candidate_name"]);
+      const url = fieldKey(row, ["Candidate LinkedIn URL", "LinkedIn URL", "LinkedIn", "Profile URL", "URL", "profile_url"]);
+      const company = fieldKey(row, ["Company1", "Current Company", "Company", "company"]);
+      const title = fieldKey(row, ["Company1 Title", "Current Title", "Candidate Profile Headline", "Headline", "Title", "headline"]);
       try {
         const out = await scoreCandidate(ctx, candidate);
         const r: ScoreResult = {
@@ -947,7 +845,7 @@ async function runScoringJob(args: {
         completedCandidates: completed,
         failedCandidates: failed,
         results: JSON.stringify(results),
-      });
+      }).catch(console.error);
     },
   );
 
@@ -960,19 +858,14 @@ async function runScoringJob(args: {
         existingHeaderCount: headerCount,
         rows: results
           .filter((r) => !r.error)
-          .map((r) => ({
-            rowIndex: r.rowIndex,
-            score: r.score,
-            reason: r.reason,
-            totalYoe: r.totalYoe ?? null,
-          })),
+          .map((r) => ({ rowIndex: r.rowIndex, score: r.score, reason: r.reason, totalYoe: r.totalYoe ?? null })),
       });
     } catch (e: any) {
       writebackError = String(e?.message ?? e);
     }
   }
 
-  storage.updateJob(jobId, {
+  await storage.updateJob(jobId, {
     status: "completed",
     completedCandidates: completed,
     failedCandidates: failed,
