@@ -1,62 +1,67 @@
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { pgTable, text, integer, bigint, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
-// A "job" is one scoring batch
-export const jobs = sqliteTable("jobs", {
-  id: text("id").primaryKey(),
-  roleId: text("role_id"), // user-set role ID (linked to roles table)
-  roleName: text("role_name").notNull(),
-  // JSON-encoded summary of context files used
-  contextSummary: text("context_summary").notNull(),
-  status: text("status").notNull(),
-  totalCandidates: integer("total_candidates").notNull(),
-  completedCandidates: integer("completed_candidates").notNull(),
-  failedCandidates: integer("failed_candidates").notNull(),
-  results: text("results").notNull(),
-  inputHeaders: text("input_headers"),
-  sheetId: text("sheet_id"),
-  sheetName: text("sheet_name"),
-  uploadFilename: text("upload_filename"),
-  error: text("error"),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-});
+// Unix ms timestamps are 13 digits and exceed PostgreSQL INTEGER (32-bit).
+// bigint { mode: "number" } stores as PG BIGINT but returns a JS number.
+
+export const jobs = pgTable(
+  "jobs",
+  {
+    id: text("id").primaryKey(),
+    roleId: text("role_id"),
+    roleName: text("role_name").notNull(),
+    contextSummary: text("context_summary").notNull(),
+    status: text("status").notNull(),
+    totalCandidates: integer("total_candidates").notNull(),
+    completedCandidates: integer("completed_candidates").notNull(),
+    failedCandidates: integer("failed_candidates").notNull(),
+    results: text("results").notNull(),
+    inputHeaders: text("input_headers"),
+    sheetId: text("sheet_id"),
+    sheetName: text("sheet_name"),
+    uploadFilename: text("upload_filename"),
+    error: text("error"),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+  },
+  (t) => [index("idx_jobs_created_at").on(t.createdAt)],
+);
 
 export type Job = typeof jobs.$inferSelect;
 export type InsertJob = typeof jobs.$inferInsert;
 
-// A "role" is a user-defined posting/req. The user picks any short ID; files
-// in Drive whose names start with that ID belong to this role.
-export const roles = sqliteTable("roles", {
-  roleId: text("role_id").primaryKey(), // user-chosen, e.g. "VECTOR" or "SS-001"
-  roleName: text("role_name").notNull(), // display name
-  // JSON: { fileId: category } — overrides for files whose auto-detection
-  // failed or was wrong. Persists so the user only has to categorize a file
-  // once per role.
+export const roles = pgTable("roles", {
+  roleId: text("role_id").primaryKey(),
+  roleName: text("role_name").notNull(),
   fileCategoryOverrides: text("file_category_overrides").notNull(),
-  createdAt: integer("created_at").notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
 
 export type Role = typeof roles.$inferSelect;
 export type InsertRole = typeof roles.$inferInsert;
 
-// Per-role calibration feedback. One row per (role, candidate) thumb/note.
-// Re-submitting feedback for the same candidate updates the existing row.
-export const calibrationFeedback = sqliteTable("calibration_feedback", {
-  id: text("id").primaryKey(),
-  roleId: text("role_id").notNull(),
-  candidateUrl: text("candidate_url").notNull(), // dedupe key within a role
-  candidateName: text("candidate_name").notNull(),
-  candidateSummary: text("candidate_summary").notNull(), // short snapshot for the prompt
-  jobId: text("job_id"), // job this feedback came from (for traceability)
-  aiScore: integer("ai_score").notNull(), // what the model gave
-  aiReason: text("ai_reason").notNull(),
-  thumb: text("thumb").notNull(), // 'up' | 'down'
-  scoreOverride: integer("score_override"), // null = no override
-  note: text("note").notNull().default(""),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-});
+export const calibrationFeedback = pgTable(
+  "calibration_feedback",
+  {
+    id: text("id").primaryKey(),
+    roleId: text("role_id").notNull(),
+    candidateUrl: text("candidate_url").notNull(),
+    candidateName: text("candidate_name").notNull(),
+    candidateSummary: text("candidate_summary").notNull(),
+    jobId: text("job_id"),
+    aiScore: integer("ai_score").notNull(),
+    aiReason: text("ai_reason").notNull(),
+    thumb: text("thumb").notNull(),
+    scoreOverride: integer("score_override"),
+    note: text("note").notNull().default(""),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+  },
+  (t) => [
+    index("idx_calibration_role").on(t.roleId),
+    uniqueIndex("idx_calibration_role_candidate").on(t.roleId, t.candidateUrl),
+  ],
+);
 
 export type CalibrationFeedback = typeof calibrationFeedback.$inferSelect;
 export type InsertCalibrationFeedback = typeof calibrationFeedback.$inferInsert;
@@ -72,12 +77,8 @@ export const scoreResultSchema = z.object({
   fields: z.record(z.string()).optional().default({}),
   score: z.number().min(1).max(5),
   reason: z.string(),
-  totalYoe: z.number().nullable().optional(), // computed years of experience
-  // Which model produced this result. "sonnet" = first-pass default,
-  // "opus" = a re-score of a borderline candidate.
+  totalYoe: z.number().nullable().optional(),
   scoredBy: z.enum(["sonnet", "opus"]).optional(),
-  // The pre-rescore score, kept for transparency so users can see what
-  // changed. Only set on Opus-rescored rows.
   originalScore: z.number().min(1).max(5).optional(),
   error: z.string().optional(),
 });
