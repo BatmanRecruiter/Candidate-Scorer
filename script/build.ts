@@ -2,32 +2,21 @@ import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
 import { rm, readFile } from "node:fs/promises";
 
-// server deps to bundle to reduce openat(2) syscalls
-// which helps cold start times
+// Server deps to bundle into the CJS output to reduce cold-start openat(2)
+// syscalls. Only list packages that are actually imported by server code.
+// Large/native packages (googleapis, mammoth, pdf-parse, word-extractor,
+// @anthropic-ai/sdk) are kept external so Node loads them from node_modules.
 const allowlist = [
-  "@google/generative-ai",
-  "axios",
-  "cors",
   "date-fns",
   "drizzle-orm",
   "drizzle-zod",
   "express",
-  "express-rate-limit",
-  "express-session",
-  "jsonwebtoken",
-  "memorystore",
+  "helmet",
   "multer",
   "nanoid",
-  "nodemailer",
-  "openai",
-  "passport",
-  "passport-local",
-  "stripe",
-  "uuid",
+  "postgres",
   "ws",
-  "xlsx",
   "zod",
-  "zod-validation-error",
 ];
 
 async function buildAll() {

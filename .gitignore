@@ -6,3 +6,12 @@ dist/
 .env.local
 .DS_Store
 *.log
+# Google service account key files — never commit credentials
+*-service-account.json
+service-account.json
+google-credentials.json
+# Candidate data exports
+exports/
+*.csv.export
+# Smoke test artifacts
+smoke_*.txt

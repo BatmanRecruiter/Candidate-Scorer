@@ -1,16 +1,13 @@
-﻿name: Deploy to Hugging Face Space
+﻿# This workflow has been superseded by Render auto-deploy.
+# Render deploys automatically from the main branch when connected via the
+# Render GitHub integration. See render.yaml for the service configuration.
+#
+# To deploy manually: push to main and Render will pick it up, or trigger
+# a manual deploy from the Render dashboard.
+name: "(Disabled) Deploy to Hugging Face Space"
 on:
-  push:
-    branches: [main]
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          lfs: true
-      - name: Push to Hugging Face Space
-        run: |
-          git remote add space https://BatmanRecruiter:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/BatmanRecruiter/real-candidate-scorer
-          git push space main --force
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Deprecated. This repo now deploys to Render, not Hugging Face."
+        required: false
