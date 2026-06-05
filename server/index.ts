@@ -67,9 +67,9 @@ app.use((req, res, next) => {
   // can't actually be running on this fresh process, so mark them failed so
   // the UI stops showing fake progress.
   try {
-    const stranded = storage.listJobs(100).filter((j) => j.status === "running");
+    const stranded = (await storage.listJobs(100)).filter((j) => j.status === "running");
     for (const j of stranded) {
-      storage.updateJob(j.id, {
+      await storage.updateJob(j.id, {
         status: "failed",
         error: "Server restarted mid-run",
       });

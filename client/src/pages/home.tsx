@@ -16,10 +16,10 @@ export default function Home() {
           Score sourced candidates against the people who actually got the job.
         </h1>
         <p className="text-muted-foreground mb-6">
-          Drop in a CSV of LinkedIn profiles. The app reads the role's Drive folder — JD,
-          hiring-manager notes, a weighted scoring rubrik, resumes of folks you hired and didn't
-          hire, interview transcripts, scorecards, incumbent profiles — then ranks each candidate 1
-          to 5 with a one-sentence reason.
+          Upload a CSV of LinkedIn profiles and role context files — JD, hiring-manager notes, a
+          weighted scoring rubrik, resumes of folks you hired and didn't hire, interview transcripts,
+          scorecards, incumbent profiles — then rank each candidate 1 to 5 with a one-sentence
+          reason.
         </p>
         <div className="flex items-center justify-center gap-3">
           <Link href="/new">
@@ -40,30 +40,29 @@ export default function Home() {
         <Card>
           <CardContent className="p-5">
             <Folder className="h-5 w-5 text-primary mb-3" />
-            <div className="font-medium mb-1">Drive-backed role context</div>
+            <div className="font-medium mb-1">Upload role context</div>
             <div className="text-sm text-muted-foreground">
-              Point at a role. The app pulls JDs, HM notes, a weighted scoring rubrik,
-              hired/not-hired resumes, transcripts, scorecards and incumbent profiles from Drive.
+              Upload JDs, HM notes, a weighted scoring rubrik, hired/not-hired resumes, transcripts,
+              scorecards, and incumbent profiles for each role.
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-5">
             <FileText className="h-5 w-5 text-primary mb-3" />
-            <div className="font-medium mb-1">CSV or Sheet input</div>
+            <div className="font-medium mb-1">CSV input</div>
             <div className="text-sm text-muted-foreground">
-              Upload a CSV of profile data, or point at a Google Sheet you already maintain — every
-              column becomes context for scoring.
+              Upload a CSV of profile data — every column becomes context for scoring.
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-5">
             <BarChart3 className="h-5 w-5 text-primary mb-3" />
-            <div className="font-medium mb-1">Score + reason + writeback</div>
+            <div className="font-medium mb-1">Score + reason + CSV download</div>
             <div className="text-sm text-muted-foreground">
-              Each candidate gets a 1-5 score and a one-sentence reason. Results land back in your
-              Sheet and in an in-app dashboard.
+              Each candidate gets a 1-5 score and a one-sentence reason. Download results as a CSV
+              or review them in the in-app dashboard.
             </div>
           </CardContent>
         </Card>

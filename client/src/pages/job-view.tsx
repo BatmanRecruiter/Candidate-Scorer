@@ -54,8 +54,6 @@ interface JobData {
     originalScore?: number;
     error?: string;
   }>;
-  sheetId?: string | null;
-  sheetName?: string | null;
   uploadFilename?: string | null;
   error?: string | null;
 }
@@ -170,13 +168,7 @@ export default function JobView() {
           <div className="text-sm text-muted-foreground">Scoring run</div>
           <h1 className="text-xl font-bold tracking-tight">{job.roleName}</h1>
           <div className="text-xs text-muted-foreground mt-1">
-            {job.sheetId && job.sheetName ? (
-              <>
-                Source: <span className="font-medium">{job.sheetName}</span> (sheet)
-              </>
-            ) : (
-              <>Source: {job.uploadFilename || "uploaded CSV"}</>
-            )}
+            Source: {job.uploadFilename || "uploaded CSV"}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -198,7 +190,7 @@ export default function JobView() {
           <CardContent className="p-4 flex items-start gap-3 text-sm">
             <AlertTriangle className="h-4 w-4 text-destructive mt-0.5" />
             <div>
-              <div className="font-medium">{running ? "Warning" : "Sheet writeback failed"}</div>
+              <div className="font-medium">{running ? "Warning" : "Job error"}</div>
               <div className="text-muted-foreground">{job.error}</div>
             </div>
           </CardContent>
@@ -886,7 +878,6 @@ interface RescoreStatus {
   changedCount?: number;
   startedAt?: number;
   finishedAt?: number;
-  writebackError?: string | null;
   error?: string;
 }
 
@@ -934,7 +925,6 @@ function RescoreStatusBanner({ status }: { status?: RescoreStatus | null }) {
                   ? ` · ${status.changedCount} score${status.changedCount === 1 ? "" : "s"} changed`
                   : " · no scores changed"}
                 {status.failed ? ` · ${status.failed} failed` : ""}
-                {status.writebackError ? ` · Sheet writeback error: ${status.writebackError}` : ""}
               </div>
             </>
           )}

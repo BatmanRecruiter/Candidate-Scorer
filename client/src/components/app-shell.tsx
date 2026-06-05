@@ -46,7 +46,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="max-w-6xl mx-auto px-6 py-8">{children}</div>
       </main>
       <footer className="border-t border-border py-4 text-xs text-muted-foreground text-center">
-        Scoring runs locally via Claude. Source data stays in your Drive and Sheets.
+        Scoring powered by Claude. Your files and results stay in your control.
       </footer>
     </div>
   );

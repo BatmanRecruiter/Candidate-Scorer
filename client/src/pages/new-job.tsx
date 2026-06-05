@@ -5,15 +5,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import {
   CheckCircle2,
   AlertCircle,
   Upload,
-  FileSpreadsheet,
-  Search,
   Loader2,
   ArrowRight,
   RefreshCw,
@@ -54,18 +51,8 @@ interface RoleSummary {
 interface PreviewFile {
   fileId: string;
   fileName: string;
-  webViewLink?: string;
   category: Category | null;
   autoDetected: boolean;
-}
-
-interface SheetListItem {
-  id: string;
-  name: string;
-}
-interface SheetInfo {
-  worksheets?: Array<{ title: string; rowCount?: number; headers?: string[] }>;
-  sheets?: Array<{ properties?: { title: string } }>;
 }
 
 export default function NewJob() {
@@ -79,16 +66,7 @@ export default function NewJob() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewFiles, setPreviewFiles] = useState<PreviewFile[]>([]);
 
-  const [mode, setMode] = useState<"upload" | "sheet">("upload");
   const [csvFile, setCsvFile] = useState<File | null>(null);
-
-  const [sheetSearch, setSheetSearch] = useState("");
-  const [sheets, setSheets] = useState<SheetListItem[]>([]);
-  const [sheetsLoading, setSheetsLoading] = useState(false);
-  const [pickedSheet, setPickedSheet] = useState<SheetListItem | null>(null);
-  const [sheetInfo, setSheetInfo] = useState<SheetInfo | null>(null);
-  const [pickedTab, setPickedTab] = useState<string>("");
-
   const [submitting, setSubmitting] = useState(false);
 
   async function loadRoles() {
@@ -113,7 +91,7 @@ export default function NewJob() {
     setPreviewLoading(true);
     setPreviewFiles([]);
     try {
-      const res = await apiRequest("POST", `/api/roles/${encodeURIComponent(id)}/preview`);
+      const res = await apiRequest("GET", `/api/roles/${encodeURIComponent(id)}/preview`);
       const data = await res.json();
       setPreviewFiles(data.files || []);
     } catch (e: any) {
@@ -157,45 +135,6 @@ export default function NewJob() {
     }
   }
 
-  async function searchSheets() {
-    setSheetsLoading(true);
-    try {
-      const res = await apiRequest("GET", `/api/sheets?q=${encodeURIComponent(sheetSearch)}`);
-      const data = await res.json();
-      setSheets(data.spreadsheets || []);
-    } catch (e: any) {
-      toast({ title: "Couldn't list sheets", description: e.message, variant: "destructive" });
-    } finally {
-      setSheetsLoading(false);
-    }
-  }
-
-  async function pickSheet(s: SheetListItem) {
-    setPickedSheet(s);
-    setSheetInfo(null);
-    setPickedTab("");
-    try {
-      const res = await apiRequest("GET", `/api/sheets/${s.id}/info`);
-      const data = await res.json();
-      setSheetInfo(data);
-      const tabs = extractTabs(data);
-      if (tabs.length) setPickedTab(tabs[0]);
-    } catch (e: any) {
-      toast({ title: "Couldn't load sheet info", description: e.message, variant: "destructive" });
-    }
-  }
-
-  function extractTabs(info: any): string[] {
-    if (!info) return [];
-    if (Array.isArray(info.worksheets)) {
-      return info.worksheets.map((w: any) => w.title || w.name).filter(Boolean);
-    }
-    if (Array.isArray(info.sheets)) {
-      return info.sheets.map((s: any) => s?.properties?.title).filter(Boolean);
-    }
-    return [];
-  }
-
   async function startRun() {
     if (!roleId) {
       toast({ title: "Pick a role first", variant: "destructive" });
@@ -209,26 +148,15 @@ export default function NewJob() {
       });
       return;
     }
+    if (!csvFile) {
+      toast({ title: "Pick a CSV first", variant: "destructive" });
+      return;
+    }
     setSubmitting(true);
     try {
       const form = new FormData();
       form.append("roleId", roleId);
-      if (mode === "upload") {
-        if (!csvFile) {
-          toast({ title: "Pick a CSV first", variant: "destructive" });
-          setSubmitting(false);
-          return;
-        }
-        form.append("csv", csvFile);
-      } else {
-        if (!pickedSheet || !pickedTab) {
-          toast({ title: "Pick a sheet and tab", variant: "destructive" });
-          setSubmitting(false);
-          return;
-        }
-        form.append("sheetId", pickedSheet.id);
-        form.append("sheetName", pickedTab);
-      }
+      form.append("csv", csvFile);
       const res = await fetch(`${(window as any).__API_BASE__ || ""}/api/jobs`, {
         method: "POST",
         body: form,
@@ -250,7 +178,6 @@ export default function NewJob() {
   const uncategorized = previewFiles.filter((f) => !f.category);
   const categorized = previewFiles.filter((f) => f.category);
 
-  // Category counts for the summary
   const counts: Record<Category, number> = {
     jd: 0,
     hm_notes: 0,
@@ -326,15 +253,15 @@ export default function NewJob() {
 
               {previewLoading && (
                 <div className="text-sm text-muted-foreground inline-flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Searching Drive…
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading files…
                 </div>
               )}
 
               {!previewLoading && roleId && previewFiles.length === 0 && (
                 <div className="rounded-md border border-border p-3 bg-card/50 text-sm text-muted-foreground">
-                  No files found starting with{" "}
-                  <code className="text-xs bg-muted px-1 py-0.5 rounded">{roleId}</code>. Rename
-                  Drive files to start with this ID and try again.
+                  No files uploaded yet for{" "}
+                  <code className="text-xs bg-muted px-1 py-0.5 rounded">{roleId}</code>. Go to
+                  Manage Roles to upload context files for this role.
                 </div>
               )}
 
@@ -360,103 +287,27 @@ export default function NewJob() {
               </span>
               Candidates
             </div>
-            <Tabs value={mode} onValueChange={(v) => setMode(v as any)}>
-              <TabsList className="grid grid-cols-2 w-full">
-                <TabsTrigger value="upload" data-testid="tab-upload">
-                  <Upload className="h-4 w-4 mr-2" /> Upload CSV
-                </TabsTrigger>
-                <TabsTrigger value="sheet" data-testid="tab-sheet">
-                  <FileSpreadsheet className="h-4 w-4 mr-2" /> Google Sheet
-                </TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="upload" className="space-y-3 pt-4">
-                <Label htmlFor="csv">Candidate CSV</Label>
-                <Input
-                  id="csv"
-                  data-testid="input-csv"
-                  type="file"
-                  accept=".csv,text/csv"
-                  onChange={(e) => setCsvFile(e.target.files?.[0] || null)}
-                />
-                {csvFile && (
-                  <p className="text-xs text-muted-foreground">
-                    {csvFile.name} — {(csvFile.size / 1024).toFixed(1)} KB
-                  </p>
-                )}
+            <div className="space-y-3">
+              <Label htmlFor="csv">
+                <Upload className="h-4 w-4 inline mr-1" />
+                Upload candidate CSV
+              </Label>
+              <Input
+                id="csv"
+                data-testid="input-csv"
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(e) => setCsvFile(e.target.files?.[0] || null)}
+              />
+              {csvFile && (
                 <p className="text-xs text-muted-foreground">
-                  Every column becomes part of the candidate's profile when scoring.
+                  {csvFile.name} — {(csvFile.size / 1024).toFixed(1)} KB
                 </p>
-              </TabsContent>
-
-              <TabsContent value="sheet" className="space-y-3 pt-4">
-                <Label htmlFor="sheet-search">Find a spreadsheet</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="sheet-search"
-                    data-testid="input-sheet-search"
-                    placeholder="Search by name"
-                    value={sheetSearch}
-                    onChange={(e) => setSheetSearch(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") searchSheets();
-                    }}
-                  />
-                  <Button
-                    type="button"
-                    onClick={searchSheets}
-                    disabled={sheetsLoading}
-                    variant="outline"
-                    data-testid="button-search-sheets"
-                  >
-                    {sheetsLoading ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Search className="h-4 w-4" />
-                    )}
-                  </Button>
-                </div>
-                {sheets.length > 0 && (
-                  <div className="border border-border rounded-md max-h-48 overflow-y-auto">
-                    {sheets.map((s) => (
-                      <button
-                        key={s.id}
-                        type="button"
-                        onClick={() => pickSheet(s)}
-                        data-testid={`button-pick-sheet-${s.id}`}
-                        className={`w-full text-left px-3 py-2 text-sm hover-elevate border-b last:border-b-0 border-border ${
-                          pickedSheet?.id === s.id ? "bg-accent" : ""
-                        }`}
-                      >
-                        <div className="font-medium truncate">{s.name}</div>
-                        <div className="text-xs text-muted-foreground truncate">{s.id}</div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {pickedSheet && (
-                  <div>
-                    <Label className="mt-2">Worksheet (tab)</Label>
-                    <select
-                      data-testid="select-tab"
-                      className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
-                      value={pickedTab}
-                      onChange={(e) => setPickedTab(e.target.value)}
-                    >
-                      <option value="">— pick a tab —</option>
-                      {extractTabs(sheetInfo).map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Score + Reason will be appended to the right of this sheet's existing columns.
-                    </p>
-                  </div>
-                )}
-              </TabsContent>
-            </Tabs>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Every column becomes part of the candidate's profile when scoring.
+              </p>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -483,7 +334,7 @@ export default function NewJob() {
         </Card>
       )}
 
-      {/* Categorized list (collapsed-ish summary) */}
+      {/* Categorized list */}
       {categorized.length > 0 && (
         <Card className="mt-6">
           <CardContent className="p-5">
@@ -540,19 +391,9 @@ function FileRow({
   return (
     <li className="flex items-center gap-2 text-sm">
       <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-      {file.webViewLink ? (
-        <a
-          href={file.webViewLink}
-          target="_blank"
-          rel="noreferrer"
-          className="truncate hover:underline flex-1 min-w-0"
-          data-testid={`link-file-${file.fileId}`}
-        >
-          {file.fileName}
-        </a>
-      ) : (
-        <span className="truncate flex-1 min-w-0">{file.fileName}</span>
-      )}
+      <span className="truncate flex-1 min-w-0" data-testid={`link-file-${file.fileId}`}>
+        {file.fileName}
+      </span>
       <select
         data-testid={`select-cat-${file.fileId}`}
         className="h-8 px-2 rounded border border-input bg-background text-xs shrink-0"

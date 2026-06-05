@@ -1,14 +1,17 @@
-import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
+import { neon } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-http";
 import { and, eq, desc, asc } from "drizzle-orm";
 import {
   jobs,
   roles,
+  roleFiles,
   calibrationFeedback,
   type Job,
   type InsertJob,
   type Role,
   type InsertRole,
+  type RoleFile,
+  type InsertRoleFile,
   type CalibrationFeedback,
   type InsertCalibrationFeedback,
 } from "@shared/schema";
@@ -23,117 +26,54 @@ export type JobSummary = {
   createdAt: number;
 };
 
-const sqlite = new Database("./data.db");
-sqlite.exec(`
-  CREATE TABLE IF NOT EXISTS jobs (
-    id TEXT PRIMARY KEY,
-    role_name TEXT NOT NULL,
-    context_summary TEXT NOT NULL,
-    status TEXT NOT NULL,
-    total_candidates INTEGER NOT NULL,
-    completed_candidates INTEGER NOT NULL,
-    failed_candidates INTEGER NOT NULL,
-    results TEXT NOT NULL,
-    input_headers TEXT,
-    sheet_id TEXT,
-    sheet_name TEXT,
-    upload_filename TEXT,
-    error TEXT,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  );
-`);
-
-sqlite.exec(`
-  CREATE TABLE IF NOT EXISTS roles (
-    role_id TEXT PRIMARY KEY,
-    role_name TEXT NOT NULL,
-    file_category_overrides TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-  );
-`);
-
-sqlite.exec(`
-  CREATE TABLE IF NOT EXISTS calibration_feedback (
-    id TEXT PRIMARY KEY,
-    role_id TEXT NOT NULL,
-    candidate_url TEXT NOT NULL,
-    candidate_name TEXT NOT NULL,
-    candidate_summary TEXT NOT NULL,
-    job_id TEXT,
-    ai_score INTEGER NOT NULL,
-    ai_reason TEXT NOT NULL,
-    thumb TEXT NOT NULL,
-    score_override INTEGER,
-    note TEXT NOT NULL DEFAULT '',
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  );
-`);
-sqlite.exec(
-  `CREATE INDEX IF NOT EXISTS idx_calibration_role ON calibration_feedback(role_id);`,
-);
-sqlite.exec(
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_calibration_role_candidate ON calibration_feedback(role_id, candidate_url);`,
-);
-sqlite.exec(
-  `CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at DESC);`,
-);
-
-// Migrate older databases. SQLite throws if the column already exists;
-// swallow that case.
-for (const sql of [
-  `ALTER TABLE jobs ADD COLUMN input_headers TEXT`,
-  `ALTER TABLE jobs ADD COLUMN role_id TEXT`,
-]) {
-  try {
-    sqlite.exec(sql);
-  } catch (e: any) {
-    if (!/duplicate column/i.test(String(e?.message))) throw e;
-  }
-}
-
-export const db = drizzle(sqlite);
+const sql = neon(process.env.DATABASE_URL!);
+export const db = drizzle({ client: sql });
 
 export interface IStorage {
-  createJob(job: InsertJob): Job;
-  getJob(id: string): Job | undefined;
-  updateJob(id: string, patch: Partial<Job>): Job | undefined;
-  listJobs(limit?: number): Job[];
-  listJobsSummary(limit?: number): JobSummary[];
+  createJob(job: InsertJob): Promise<Job>;
+  getJob(id: string): Promise<Job | undefined>;
+  updateJob(id: string, patch: Partial<Job>): Promise<Job | undefined>;
+  listJobs(limit?: number): Promise<Job[]>;
+  listJobsSummary(limit?: number): Promise<JobSummary[]>;
 
-  createRole(role: InsertRole): Role;
-  getRole(roleId: string): Role | undefined;
-  updateRole(roleId: string, patch: Partial<Role>): Role | undefined;
-  deleteRole(roleId: string): void;
-  listRoles(): Role[];
+  createRole(role: InsertRole): Promise<Role>;
+  getRole(roleId: string): Promise<Role | undefined>;
+  updateRole(roleId: string, patch: Partial<Role>): Promise<Role | undefined>;
+  deleteRole(roleId: string): Promise<void>;
+  listRoles(): Promise<Role[]>;
 
-  upsertFeedback(fb: InsertCalibrationFeedback): CalibrationFeedback;
+  listRoleFiles(roleId: string): Promise<RoleFile[]>;
+  createRoleFile(file: InsertRoleFile): Promise<RoleFile>;
+  updateRoleFileCategory(id: string, category: string | null, autoDetected: boolean): Promise<RoleFile | undefined>;
+  deleteRoleFile(id: string): Promise<void>;
+
+  upsertFeedback(fb: InsertCalibrationFeedback): Promise<CalibrationFeedback>;
   getFeedbackForRoleCandidate(
     roleId: string,
     candidateUrl: string,
-  ): CalibrationFeedback | undefined;
-  listFeedbackForRole(roleId: string, limit?: number): CalibrationFeedback[];
-  deleteFeedback(id: string): void;
+  ): Promise<CalibrationFeedback | undefined>;
+  listFeedbackForRole(roleId: string, limit?: number): Promise<CalibrationFeedback[]>;
+  deleteFeedback(id: string): Promise<void>;
 }
 
 export const storage: IStorage = {
-  createJob(job: InsertJob) {
-    return db.insert(jobs).values(job).returning().get();
+  async createJob(job: InsertJob) {
+    const [row] = await db.insert(jobs).values(job).returning();
+    return row;
   },
-  getJob(id: string) {
-    return db.select().from(jobs).where(eq(jobs.id, id)).get();
+  async getJob(id: string) {
+    const [row] = await db.select().from(jobs).where(eq(jobs.id, id));
+    return row;
   },
-  updateJob(id: string, patch: Partial<Job>) {
+  async updateJob(id: string, patch: Partial<Job>) {
     const next = { ...patch, updatedAt: Date.now() };
-    return db.update(jobs).set(next).where(eq(jobs.id, id)).returning().get();
+    const [row] = await db.update(jobs).set(next).where(eq(jobs.id, id)).returning();
+    return row;
   },
-  listJobs(limit = 25) {
-    return db.select().from(jobs).orderBy(desc(jobs.createdAt)).limit(limit).all();
+  async listJobs(limit = 25) {
+    return db.select().from(jobs).orderBy(desc(jobs.createdAt)).limit(limit);
   },
-  listJobsSummary(limit = 50): JobSummary[] {
-    // Lightweight projection for the Past Runs list. Avoids loading the
-    // huge `results` JSON blob (can be megabytes per job).
+  async listJobsSummary(limit = 50): Promise<JobSummary[]> {
     return db
       .select({
         id: jobs.id,
@@ -146,28 +86,49 @@ export const storage: IStorage = {
       })
       .from(jobs)
       .orderBy(desc(jobs.createdAt))
-      .limit(limit)
-      .all();
+      .limit(limit);
   },
 
-  createRole(role: InsertRole) {
-    return db.insert(roles).values(role).returning().get();
+  async createRole(role: InsertRole) {
+    const [row] = await db.insert(roles).values(role).returning();
+    return row;
   },
-  getRole(roleId: string) {
-    return db.select().from(roles).where(eq(roles.roleId, roleId)).get();
+  async getRole(roleId: string) {
+    const [row] = await db.select().from(roles).where(eq(roles.roleId, roleId));
+    return row;
   },
-  updateRole(roleId: string, patch: Partial<Role>) {
-    return db.update(roles).set(patch).where(eq(roles.roleId, roleId)).returning().get();
+  async updateRole(roleId: string, patch: Partial<Role>) {
+    const [row] = await db.update(roles).set(patch).where(eq(roles.roleId, roleId)).returning();
+    return row;
   },
-  deleteRole(roleId: string) {
-    db.delete(roles).where(eq(roles.roleId, roleId)).run();
+  async deleteRole(roleId: string) {
+    await db.delete(roles).where(eq(roles.roleId, roleId));
   },
-  listRoles() {
-    return db.select().from(roles).orderBy(asc(roles.roleName)).all();
+  async listRoles() {
+    return db.select().from(roles).orderBy(asc(roles.roleName));
   },
 
-  upsertFeedback(fb: InsertCalibrationFeedback) {
-    const existing = db
+  async listRoleFiles(roleId: string) {
+    return db.select().from(roleFiles).where(eq(roleFiles.roleId, roleId)).orderBy(asc(roleFiles.createdAt));
+  },
+  async createRoleFile(file: InsertRoleFile) {
+    const [row] = await db.insert(roleFiles).values(file).returning();
+    return row;
+  },
+  async updateRoleFileCategory(id: string, category: string | null, autoDetected: boolean) {
+    const [row] = await db
+      .update(roleFiles)
+      .set({ category, autoDetected: autoDetected ? 1 : 0 })
+      .where(eq(roleFiles.id, id))
+      .returning();
+    return row;
+  },
+  async deleteRoleFile(id: string) {
+    await db.delete(roleFiles).where(eq(roleFiles.id, id));
+  },
+
+  async upsertFeedback(fb: InsertCalibrationFeedback) {
+    const [existing] = await db
       .select()
       .from(calibrationFeedback)
       .where(
@@ -175,10 +136,9 @@ export const storage: IStorage = {
           eq(calibrationFeedback.roleId, fb.roleId),
           eq(calibrationFeedback.candidateUrl, fb.candidateUrl),
         ),
-      )
-      .get();
+      );
     if (existing) {
-      return db
+      const [row] = await db
         .update(calibrationFeedback)
         .set({
           candidateName: fb.candidateName,
@@ -192,13 +152,14 @@ export const storage: IStorage = {
           updatedAt: Date.now(),
         })
         .where(eq(calibrationFeedback.id, existing.id))
-        .returning()
-        .get();
+        .returning();
+      return row;
     }
-    return db.insert(calibrationFeedback).values(fb).returning().get();
+    const [row] = await db.insert(calibrationFeedback).values(fb).returning();
+    return row;
   },
-  getFeedbackForRoleCandidate(roleId, candidateUrl) {
-    return db
+  async getFeedbackForRoleCandidate(roleId, candidateUrl) {
+    const [row] = await db
       .select()
       .from(calibrationFeedback)
       .where(
@@ -206,19 +167,18 @@ export const storage: IStorage = {
           eq(calibrationFeedback.roleId, roleId),
           eq(calibrationFeedback.candidateUrl, candidateUrl),
         ),
-      )
-      .get();
+      );
+    return row;
   },
-  listFeedbackForRole(roleId, limit = 200) {
+  async listFeedbackForRole(roleId, limit = 200) {
     return db
       .select()
       .from(calibrationFeedback)
       .where(eq(calibrationFeedback.roleId, roleId))
       .orderBy(desc(calibrationFeedback.updatedAt))
-      .limit(limit)
-      .all();
+      .limit(limit);
   },
-  deleteFeedback(id: string) {
-    db.delete(calibrationFeedback).where(eq(calibrationFeedback.id, id)).run();
+  async deleteFeedback(id: string) {
+    await db.delete(calibrationFeedback).where(eq(calibrationFeedback.id, id));
   },
 };
