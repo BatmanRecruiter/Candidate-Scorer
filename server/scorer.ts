@@ -1,8 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic();
-const DEFAULT_MODEL = "claude_sonnet_4_6";
-export const OPUS_MODEL = "claude_opus_4_7";
+const DEFAULT_MODEL = "claude-sonnet-4-6";
+export const OPUS_MODEL = "claude-opus-4-7";
 export type ScoringModel = typeof DEFAULT_MODEL | typeof OPUS_MODEL;
 
 // Today's date used by the scorer for YOE math. Captured at module load; that's
