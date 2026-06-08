@@ -232,7 +232,7 @@ export async function scoreCandidate(
     client.messages.create({
       model,
       max_tokens: 1024,
-      system,
+      system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content: userMsg }],
     })
   );
