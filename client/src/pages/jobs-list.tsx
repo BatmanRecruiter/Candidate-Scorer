@@ -1,9 +1,13 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { AppShell } from "@/components/app-shell";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { ArrowRight, Trash2 } from "lucide-react";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 interface JobRow {
   id: string;
@@ -16,15 +20,35 @@ interface JobRow {
 }
 
 export default function JobsList() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
   const { data, isLoading } = useQuery<{ jobs: JobRow[] }>({
     queryKey: ["/api/jobs"],
     refetchInterval: 8000,
-    // Keep the cached list around for instant subsequent visits
-    // — the background refetch will update it within a couple seconds.
     staleTime: 30_000,
     gcTime: 5 * 60_000,
     refetchOnMount: "always",
   });
+
+  async function deleteRun(e: React.MouseEvent, job: JobRow) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm(`Delete the run for "${job.roleName}" on ${new Date(job.createdAt).toLocaleString()}? This cannot be undone.`)) return;
+    setDeletingId(job.id);
+    try {
+      const res = await apiRequest("DELETE", `/api/jobs/${job.id}`);
+      if (!res.ok) throw new Error(`Failed (${res.status})`);
+      queryClient.setQueryData<{ jobs: JobRow[] }>(["/api/jobs"], (old) =>
+        old ? { jobs: old.jobs.filter((j) => j.id !== job.id) } : old
+      );
+    } catch (e: any) {
+      toast({ title: "Couldn't delete run", description: e.message, variant: "destructive" });
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   return (
     <AppShell>
@@ -59,6 +83,16 @@ export default function JobsList() {
                   <div className="text-sm text-muted-foreground">
                     {j.completed}/{j.total}
                   </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={(e) => deleteRun(e, j)}
+                    disabled={deletingId === j.id}
+                    className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                    title="Delete run"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
                   <ArrowRight className="h-4 w-4 text-muted-foreground" />
                 </CardContent>
               </Card>

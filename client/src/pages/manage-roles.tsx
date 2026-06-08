@@ -20,6 +20,8 @@ import {
   ThumbsDown,
   MessageSquare,
   ExternalLink,
+  Pencil,
+  X,
 } from "lucide-react";
 
 const CATEGORIES = [
@@ -226,6 +228,11 @@ export default function ManageRoles() {
                     setSelectedRoleId(selectedRoleId === r.roleId ? null : r.roleId)
                   }
                   onDelete={() => deleteRole(r.roleId)}
+                  onRename={(newName) =>
+                    setRoles((cur) =>
+                      cur.map((x) => (x.roleId === r.roleId ? { ...x, roleName: newName } : x))
+                    )
+                  }
                 />
               ))}
             </div>
@@ -241,13 +248,19 @@ function RoleRow({
   expanded,
   onToggle,
   onDelete,
+  onRename,
 }: {
   role: RoleSummary;
   expanded: boolean;
   onToggle: () => void;
   onDelete: () => void;
+  onRename: (newName: string) => void;
 }) {
+  const { toast } = useToast();
   const [copied, setCopied] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [draftName, setDraftName] = useState(role.roleName);
+  const [saving, setSaving] = useState(false);
 
   async function copyId() {
     try {
@@ -259,43 +272,112 @@ function RoleRow({
     }
   }
 
+  function startRename(e: React.MouseEvent) {
+    e.stopPropagation();
+    setDraftName(role.roleName);
+    setRenaming(true);
+  }
+
+  function cancelRename(e: React.MouseEvent) {
+    e.stopPropagation();
+    setRenaming(false);
+  }
+
+  async function saveRename(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = draftName.trim();
+    if (!trimmed) return;
+    if (trimmed === role.roleName) { setRenaming(false); return; }
+    setSaving(true);
+    try {
+      const res = await apiRequest("PATCH", `/api/roles/${encodeURIComponent(role.roleId)}`, {
+        roleName: trimmed,
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.message || `Failed (${res.status})`);
+      }
+      onRename(trimmed);
+      setRenaming(false);
+      toast({ title: "Role renamed" });
+    } catch (err: any) {
+      toast({ title: "Couldn't rename role", description: err.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="rounded-md border border-border bg-card/50">
       <div className="flex items-center gap-2 p-3">
-        <button
-          type="button"
-          onClick={onToggle}
-          className="flex-1 flex items-center gap-2 text-left min-w-0"
-          data-testid={`button-toggle-role-${role.roleId}`}
-        >
-          <ChevronRight
-            className={`h-4 w-4 text-muted-foreground transition-transform ${
-              expanded ? "rotate-90" : ""
-            }`}
-          />
-          <code className="text-xs bg-muted px-1.5 py-0.5 rounded shrink-0">{role.roleId}</code>
-          <span className="text-sm font-medium truncate">{role.roleName}</span>
-        </button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={copyId}
-          data-testid={`button-copy-id-${role.roleId}`}
-          className="gap-1.5 h-7"
-        >
-          {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-          {copied ? "Copied" : "Copy ID"}
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={onDelete}
-          data-testid={`button-delete-role-${role.roleId}`}
-          className="h-7 px-2 text-destructive hover:text-destructive"
-          title="Delete role"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
+        {renaming ? (
+          <form onSubmit={saveRename} className="flex-1 flex items-center gap-2 min-w-0">
+            <code className="text-xs bg-muted px-1.5 py-0.5 rounded shrink-0">{role.roleId}</code>
+            <Input
+              autoFocus
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              className="h-7 text-sm"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <Button type="submit" size="sm" disabled={saving} className="h-7 px-3 gap-1.5">
+              {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+              Save
+            </Button>
+            <Button type="button" size="sm" variant="ghost" onClick={cancelRename} className="h-7 px-2">
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </form>
+        ) : (
+          <button
+            type="button"
+            onClick={onToggle}
+            className="flex-1 flex items-center gap-2 text-left min-w-0"
+            data-testid={`button-toggle-role-${role.roleId}`}
+          >
+            <ChevronRight
+              className={`h-4 w-4 text-muted-foreground transition-transform ${
+                expanded ? "rotate-90" : ""
+              }`}
+            />
+            <code className="text-xs bg-muted px-1.5 py-0.5 rounded shrink-0">{role.roleId}</code>
+            <span className="text-sm font-medium truncate">{role.roleName}</span>
+          </button>
+        )}
+        {!renaming && (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={startRename}
+              data-testid={`button-rename-role-${role.roleId}`}
+              className="h-7 px-2"
+              title="Rename role"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={copyId}
+              data-testid={`button-copy-id-${role.roleId}`}
+              className="gap-1.5 h-7"
+            >
+              {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+              {copied ? "Copied" : "Copy ID"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onDelete}
+              data-testid={`button-delete-role-${role.roleId}`}
+              className="h-7 px-2 text-destructive hover:text-destructive"
+              title="Delete role"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </>
+        )}
       </div>
       {expanded && <RoleDetail roleId={role.roleId} />}
     </div>
