@@ -197,6 +197,26 @@ function extractScoreJson(text: string): string | null {
   return null;
 }
 
+// Retry a function up to maxRetries times on 429 rate-limit errors.
+// Respects the Retry-After header when present; otherwise uses exponential backoff.
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 4): Promise<T> {
+  let backoffMs = 10_000;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      if (attempt === maxRetries) throw e;
+      const isRateLimit = e?.status === 429 || e?.name === "RateLimitError";
+      if (!isRateLimit) throw e;
+      const retryAfterSec = e?.headers?.["retry-after"];
+      const waitMs = retryAfterSec ? Number(retryAfterSec) * 1000 : backoffMs;
+      await new Promise((r) => setTimeout(r, waitMs));
+      backoffMs = Math.min(backoffMs * 2, 60_000);
+    }
+  }
+  throw new Error("unreachable");
+}
+
 export async function scoreCandidate(
   ctx: RoleContext,
   candidate: CandidateInput,
@@ -208,12 +228,14 @@ export async function scoreCandidate(
     formatCandidate(candidate) +
     `\n\nRespond with ONLY the JSON object now. No preamble. No markdown. No reasoning. Start with { and end with }.`;
 
-  const resp = await client.messages.create({
-    model,
-    max_tokens: 1024,
-    system,
-    messages: [{ role: "user", content: userMsg }],
-  });
+  const resp = await withRetry(() =>
+    client.messages.create({
+      model,
+      max_tokens: 1024,
+      system,
+      messages: [{ role: "user", content: userMsg }],
+    })
+  );
 
   const textBlock = resp.content.find((b) => b.type === "text") as
     | { type: "text"; text: string }

@@ -27,7 +27,7 @@ import type { ScoreResult } from "@shared/schema";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
-const SCORE_CONCURRENCY = 5;
+const SCORE_CONCURRENCY = 2;
 
 async function runWithConcurrency<T, R>(
   items: T[],
