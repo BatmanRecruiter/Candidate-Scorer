@@ -520,6 +520,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({ jobs });
   });
 
+  app.delete("/api/jobs/:id", async (req, res) => {
+    const job = await storage.getJob(req.params.id);
+    if (!job) return res.status(404).json({ message: "Job not found" });
+    await storage.deleteJob(req.params.id);
+    res.json({ ok: true });
+  });
+
   app.get("/api/jobs/:id/csv", async (req, res) => {
     const job = await storage.getJob(req.params.id);
     if (!job) return res.status(404).send("Not found");

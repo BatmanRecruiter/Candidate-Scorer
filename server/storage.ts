@@ -35,6 +35,7 @@ export interface IStorage {
   updateJob(id: string, patch: Partial<Job>): Promise<Job | undefined>;
   listJobs(limit?: number): Promise<Job[]>;
   listJobsSummary(limit?: number): Promise<JobSummary[]>;
+  deleteJob(id: string): Promise<void>;
 
   createRole(role: InsertRole): Promise<Role>;
   getRole(roleId: string): Promise<Role | undefined>;
@@ -87,6 +88,9 @@ export const storage: IStorage = {
       .from(jobs)
       .orderBy(desc(jobs.createdAt))
       .limit(limit);
+  },
+  async deleteJob(id: string) {
+    await db.delete(jobs).where(eq(jobs.id, id));
   },
 
   async createRole(role: InsertRole) {
