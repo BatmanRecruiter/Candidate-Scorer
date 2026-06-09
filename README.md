@@ -23,7 +23,7 @@ Built to replace the manual "open every LinkedIn profile, cross-reference the ru
 - **Reads candidates from a Google Sheet.** Drop a sheet ID into the role config; the app pulls every row and treats it as a candidate.
 - **Pulls per-role context from Google Drive.** Point a role at a Drive folder. The app categorizes every file by filename keyword into nine buckets — `jd`, `hm_notes`, `rubrik`, `hired`, `not_hired`, `transcripts`, `scorecards`, `incumbents`, `benchmark_candidates` — and assembles them into a single context object the scorer consumes.
 - **Scores every candidate 1–5 against the rubric.** First pass uses Claude Sonnet 4.6 for cost and throughput. Output is structured: `{score, reason, totalYoe}`.
-- **Two-pass review for borderline candidates.** A one-click "Re-score borderline (Opus)" button on completed runs re-runs every score of 2, 3, or 4 through Claude Opus 4.7, stores the original Sonnet score so the diff is visible, and writes only the changed rows back to the Sheet. The rest of the run is untouched.
+- **Two-pass review for borderline candidates.** A one-click "Re-score borderline (Opus)" button on completed runs re-runs every score of 3 or 4 through Claude Opus 4.7, stores the original Sonnet score so the diff is visible, and writes only the changed rows back to the Sheet. The rest of the run is untouched.
 - **Per-role calibration feedback.** Thumbs up/down, free-text notes, and manual score overrides on any candidate row are stored against the role and injected into the next run's prompt so the model learns the recruiter's taste over time.
 - **Deterministic rules baked into the prompt.** A few rules are too high-stakes to leave to model judgment, so they're enforced explicitly:
   - **Insufficient Data** — if both the About and Experience sections are near-empty, auto-score 1 with reason "Insufficient Data".
@@ -95,7 +95,7 @@ In this repo, all three calls route through a host-platform credential layer. Wh
 3. Start a scoring job by pasting a Google Sheet ID with candidate rows.
 4. The job runs first-pass Sonnet scoring, writes results back to the Sheet, and surfaces a candidate list in the UI.
 5. Review the run. Drop thumbs up/down, notes, or score overrides on rows that look wrong — these become calibration feedback for the next run.
-6. If you want a tighter read on the borderline candidates, click "Re-score borderline (Opus)". The 2/3/4 candidates re-run through Opus 4.7 and only the changed rows get written back.
+6. If you want a tighter read on the borderline candidates, click "Re-score borderline (Opus)". The 3/4 candidates re-run through Opus 4.7 and only the changed rows get written back.
 
 ---
 

@@ -45,7 +45,7 @@ export function RescoreButton({
   if (rescoreStatus?.status === "running") return null;
 
   const borderlineCount = results.filter(
-    (r) => !r.error && (r.score === 2 || r.score === 3 || r.score === 4) && r.scoredBy !== "opus",
+    (r) => !r.error && (r.score === 3 || r.score === 4) && r.scoredBy !== "opus",
   ).length;
   if (borderlineCount === 0) return null;
 
@@ -53,7 +53,7 @@ export function RescoreButton({
     if (
       !confirm(
         `This will re-score ${borderlineCount} borderline candidate${borderlineCount === 1 ? "" : "s"} ` +
-          `(score 2-4) using Claude Opus — a higher-quality but more expensive model. Continue?`,
+          `(score 3-4) using Claude Opus — a higher-quality but more expensive model. Continue?`,
       )
     )
       return;
@@ -82,7 +82,7 @@ export function RescoreButton({
       onClick={start}
       disabled={submitting}
       data-testid="button-rescore-borderline"
-      title={`Re-score the ${borderlineCount} borderline candidate${borderlineCount === 1 ? "" : "s"} (2/3/4) with Opus`}
+      title={`Re-score the ${borderlineCount} borderline candidate${borderlineCount === 1 ? "" : "s"} (3/4) with Opus`}
     >
       {submitting ? (
         <Loader2 className="h-4 w-4 animate-spin" />

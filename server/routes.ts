@@ -486,8 +486,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // -------------------------------------------------------------------------
-  // Two-pass scoring: re-score borderline candidates (score 2/3/4) with Opus.
-  // Cheap candidates (1s and 5s) stay on the Sonnet pass. The button on the
+  // Two-pass scoring: re-score borderline candidates (score 3/4) with Opus.
+  // Cheap candidates (1s, 2s, and 5s) stay on the Sonnet pass. The button on the
   // run page triggers this. Responds immediately with the count being rescored
   // and runs in the background; the run page polls /api/jobs/:id to see
   // updated rows and the rescoreStatus field on contextSummary.
@@ -505,9 +505,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
 
     const allResults: ScoreResult[] = JSON.parse(job.results);
-    // Borderline = score 2, 3, or 4 that wasn't already rescored by Opus.
+    // Borderline = score 3 or 4 that wasn't already rescored by Opus.
     const borderline = allResults.filter(
-      (r) => !r.error && (r.score === 2 || r.score === 3 || r.score === 4) && r.scoredBy !== "opus",
+      (r) => !r.error && (r.score === 3 || r.score === 4) && r.scoredBy !== "opus",
     );
 
     if (!borderline.length) {
@@ -641,7 +641,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
     const allResults: ScoreResult[] = JSON.parse(batchJob.results);
     const borderline = allResults.filter(
-      (r) => !r.error && (r.score === 2 || r.score === 3 || r.score === 4) && r.scoredBy !== "opus",
+      (r) => !r.error && (r.score === 3 || r.score === 4) && r.scoredBy !== "opus",
     );
     if (!borderline.length) {
       return res.json({ jobId: batchJob.id, rescoreCount: 0, message: "No borderline candidates to rescore." });
