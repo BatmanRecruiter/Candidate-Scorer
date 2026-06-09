@@ -6,8 +6,8 @@
 
 import { neon } from "@neondatabase/serverless";
 
-const DB_URL =
-  "postgresql://neondb_owner:npg_2vFNObQyI0cG@ep-autumn-boat-apjuhlph-pooler.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require";
+const DB_URL = process.env.DATABASE_URL;
+if (!DB_URL) throw new Error("DATABASE_URL environment variable is not set");
 
 const LOGISTICS_PATTERNS = [
   /^Do you need to give (two weeks'|notice)/i,

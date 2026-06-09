@@ -431,7 +431,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           const { hits, files } = await loadRoleContext(role.roleId);
           const baseSummary = buildSummary(files, hits);
 
-          const calibrationRows = await storage.listFeedbackForRole(role.roleId, 50);
+          const calibrationRows = await storage.listFeedbackForRole(role.roleId, 500);
           const calibrationNotes = await buildCalibrationNotes(role.roleId);
           const calibrationApplied = {
             count: calibrationNotes.length,
@@ -977,10 +977,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
 // Build the CALIBRATION_NOTES bucket for the system prompt. Each feedback row
 // becomes one short, structured paragraph the model can pattern-match on.
-// Capped to ~50 notes and ~30k chars so the prompt stays reasonable.
+// Capped to ~30k chars so the prompt stays reasonable. Count limit is high
+// so the character cap is the only meaningful constraint.
 async function buildCalibrationNotes(roleId: string): Promise<string[]> {
   if (!roleId) return [];
-  const rows = await storage.listFeedbackForRole(roleId, 50);
+  const rows = await storage.listFeedbackForRole(roleId, 500);
   if (!rows.length) return [];
   const out: string[] = [];
   let totalChars = 0;

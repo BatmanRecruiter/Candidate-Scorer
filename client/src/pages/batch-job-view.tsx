@@ -4,6 +4,9 @@ import { AppShell } from "@/components/app-shell";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { apiRequest } from "@/lib/queryClient";
+import { FeedbackButton, CalibrationFeedback } from "@/components/feedback-button";
+import { CalibrationApplied } from "@/components/calibration-applied";
 import {
   BarChart,
   Bar,
@@ -126,6 +129,35 @@ export default function BatchJobView() {
       .sort((a, b) => b.score - a.score || a.rowIndex - b.rowIndex)
       .slice(0, 10);
   }, [job]);
+
+  const [feedbackMap, setFeedbackMap] = useState<Record<string, CalibrationFeedback>>({});
+  const [feedbackVersion, setFeedbackVersion] = useState(0);
+  useEffect(() => {
+    if (!job?.roleId) {
+      setFeedbackMap({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiRequest(
+          "GET",
+          `/api/roles/${encodeURIComponent(job.roleId as string)}/feedback`,
+        );
+        const data = await res.json();
+        if (cancelled) return;
+        const map: Record<string, CalibrationFeedback> = {};
+        for (const f of (data.feedback || []) as CalibrationFeedback[]) {
+          map[f.candidateUrl] = f;
+        }
+        setFeedbackMap(map);
+      } catch {
+        /* non-fatal */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [job?.roleId, feedbackVersion]);
+  const bumpFeedback = () => setFeedbackVersion((v) => v + 1);
 
   if (!job) {
     return (
@@ -273,6 +305,8 @@ export default function BatchJobView() {
             </Card>
           </div>
 
+          <CalibrationApplied applied={job.contextSummary?.calibrationApplied} />
+
           {top10.length > 0 && (
             <Card className="mb-6">
               <CardContent className="p-5">
@@ -304,6 +338,15 @@ export default function BatchJobView() {
                         </div>
                         <div className="text-sm mt-1">{r.reason}</div>
                       </div>
+                      <div className="shrink-0">
+                        <FeedbackButton
+                          r={r}
+                          roleId={job.roleId || null}
+                          jobId={job.id}
+                          feedback={feedbackMap[r.candidateUrl] || null}
+                          onChanged={bumpFeedback}
+                        />
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -323,6 +366,7 @@ export default function BatchJobView() {
                       <th className="py-2 pr-4">Company / Title</th>
                       <th className="py-2 pr-4 text-center">Score</th>
                       <th className="py-2 pr-4">Reason</th>
+                      <th className="py-2 pr-4 text-center">Feedback</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -366,6 +410,17 @@ export default function BatchJobView() {
                               <span className="text-destructive">{r.error}</span>
                             ) : (
                               r.reason
+                            )}
+                          </td>
+                          <td className="py-2 pr-4 text-center">
+                            {r.error ? null : (
+                              <FeedbackButton
+                                r={r}
+                                roleId={job.roleId || null}
+                                jobId={job.id}
+                                feedback={feedbackMap[r.candidateUrl] || null}
+                                onChanged={bumpFeedback}
+                              />
                             )}
                           </td>
                         </tr>
