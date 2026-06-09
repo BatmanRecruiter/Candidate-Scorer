@@ -5,7 +5,11 @@
 // Import this everywhere instead of calling the SDK directly. Every app that
 // uses it automatically gets:
 //   - prompt caching on your (big, static) system prompt + tools
-//   - an explicit 1-hour cache lifetime (dodges the silent 5-min default)
+//   - a 5-minute cache lifetime by default. A scoring RUN finishes in minutes
+//     and its calls are seconds apart, so a 5-min cache hits on every read AND
+//     the cache WRITE costs 1.25x base (vs 2x for a 1-hour write). Only override
+//     to "1h" when calls are spaced further apart than 5 min — e.g. pre-warming
+//     the cache before submitting an async Message Batch (see routes.ts).
 //   - a console log so you can SEE whether the cache is actually working
 //
 // This is the "set it once, use it everywhere" piece. The only thing each app
@@ -39,7 +43,7 @@ export async function cachedMessage({
   tools,
   model = "claude-sonnet-4-6",
   maxTokens = 1024,
-  ttl = "1h",
+  ttl = "5m",
 }: CachedMessageOptions) {
   const request: Anthropic.MessageCreateParamsNonStreaming = {
     model,
