@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { FeedbackButton, CalibrationFeedback } from "@/components/feedback-button";
 import { CalibrationApplied } from "@/components/calibration-applied";
+import { RescoreButton, RescoreStatusBanner, RescoreStatus } from "@/components/rescore-button";
 import {
   BarChart,
   Bar,
@@ -168,7 +169,14 @@ export default function JobView() {
         </div>
         <div className="flex items-center gap-2">
           <StatusBadge status={job.status} />
-          <RescoreButton job={job} />
+          <RescoreButton
+            jobId={job.id}
+            apiEndpoint={`/api/jobs/${job.id}/rescore-borderline`}
+            completedStatus="completed"
+            status={job.status}
+            results={job.results}
+            rescoreStatus={job.contextSummary?.rescoreStatus}
+          />
           <a
             href={`${(window as any).__API_BASE__ || ""}/api/jobs/${job.id}/csv`}
             download
@@ -476,138 +484,3 @@ function CandidateRow({
 }
 
 
-// ---------------------------------------------------------------------------
-// Two-pass rescore: button + status banner.
-//
-// Sonnet 4.6 is the first pass. Once a run is complete, the recruiter can
-// click "Re-score borderline (Opus)" to send every score-2/3/4 row back
-// through Opus 4.7 for a higher-quality second opinion. Obvious 1s and 5s
-// are left alone to save cost. The button only appears when the job is
-// completed AND there's at least one rescorable row.
-// ---------------------------------------------------------------------------
-function RescoreButton({ job }: { job: JobData }) {
-  const { toast } = useToast();
-  const [submitting, setSubmitting] = useState(false);
-
-  if (job.status !== "completed") return null;
-  const rescoreStatus = job.contextSummary?.rescoreStatus;
-  if (rescoreStatus?.status === "running") return null;
-
-  const borderlineCount = job.results.filter(
-    (r) => !r.error && (r.score === 2 || r.score === 3 || r.score === 4) && r.scoredBy !== "opus",
-  ).length;
-  if (borderlineCount === 0) return null;
-
-  async function start() {
-    if (!confirm(
-      `This will re-score ${borderlineCount} borderline candidate${borderlineCount === 1 ? "" : "s"} ` +
-      `(score 2-4) using Claude Opus 4.7 — a higher-quality but more expensive model. ` +
-      `Continue?`,
-    )) return;
-    setSubmitting(true);
-    try {
-      await apiRequest(
-        "POST",
-        `/api/jobs/${job.id}/rescore-borderline`,
-        undefined,
-      );
-      toast({
-        title: "Rescore started",
-        description: `Re-scoring ${borderlineCount} candidate${borderlineCount === 1 ? "" : "s"} with Opus.`,
-      });
-    } catch (e: any) {
-      toast({
-        title: "Failed to start rescore",
-        description: String(e?.message ?? e),
-        variant: "destructive",
-      });
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <Button
-      variant="outline"
-      className="gap-2"
-      onClick={start}
-      disabled={submitting}
-      data-testid="button-rescore-borderline"
-      title={`Re-score the ${borderlineCount} borderline candidate${borderlineCount === 1 ? "" : "s"} (2/3/4) with Opus 4.7`}
-    >
-      {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-      Re-score borderline (Opus)
-    </Button>
-  );
-}
-
-interface RescoreStatus {
-  status: "running" | "completed" | "failed";
-  model?: string;
-  total?: number;
-  completed?: number;
-  failed?: number;
-  changedCount?: number;
-  startedAt?: number;
-  finishedAt?: number;
-  error?: string;
-}
-
-function RescoreStatusBanner({ status }: { status?: RescoreStatus | null }) {
-  if (!status) return null;
-  const isRunning = status.status === "running";
-  const isFailed = status.status === "failed";
-  const isDone = status.status === "completed";
-
-  const tone = isFailed
-    ? "border-destructive/40 bg-destructive/5"
-    : isRunning
-      ? "border-primary/40 bg-primary/5"
-      : "border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950/20";
-
-  return (
-    <Card className={`mb-6 ${tone}`} data-testid="card-rescore-status">
-      <CardContent className="p-4 flex items-start gap-3 text-sm">
-        {isRunning ? (
-          <Loader2 className="h-4 w-4 mt-0.5 animate-spin text-primary" />
-        ) : isFailed ? (
-          <AlertTriangle className="h-4 w-4 mt-0.5 text-destructive" />
-        ) : (
-          <Sparkles className="h-4 w-4 mt-0.5 text-emerald-600" />
-        )}
-        <div className="flex-1">
-          {isRunning && (
-            <>
-              <div className="font-medium">Re-scoring with Opus 4.7</div>
-              <div className="text-muted-foreground">
-                {status.completed ?? 0} / {status.total ?? 0} complete
-                {status.failed ? ` · ${status.failed} failed` : ""}
-                {(status.changedCount ?? 0) > 0
-                  ? ` · ${status.changedCount} score${status.changedCount === 1 ? "" : "s"} changed so far`
-                  : ""}
-              </div>
-            </>
-          )}
-          {isDone && (
-            <>
-              <div className="font-medium">Opus rescore complete</div>
-              <div className="text-muted-foreground">
-                Re-scored {status.completed ?? 0} candidate{(status.completed ?? 0) === 1 ? "" : "s"}
-                {(status.changedCount ?? 0) > 0
-                  ? ` · ${status.changedCount} score${status.changedCount === 1 ? "" : "s"} changed`
-                  : " · no scores changed"}
-                {status.failed ? ` · ${status.failed} failed` : ""}
-              </div>
-            </>
-          )}
-          {isFailed && (
-            <>
-              <div className="font-medium">Opus rescore failed</div>
-              <div className="text-muted-foreground">{status.error || "Unknown error"}</div>
-            </>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}

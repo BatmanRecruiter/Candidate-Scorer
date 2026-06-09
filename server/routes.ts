@@ -624,6 +624,129 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     })();
   });
 
+  app.post("/api/batch-jobs/:id/rescore-borderline", async (req, res) => {
+    const batchJob = await storage.getBatchJob(req.params.id);
+    if (!batchJob) return res.status(404).json({ message: "Batch job not found" });
+    if (batchJob.status !== "ended") {
+      return res.status(400).json({ message: "Batch job must be completed before rescoring" });
+    }
+    let summary: any = {};
+    try { summary = JSON.parse(batchJob.contextSummary || "{}"); } catch {}
+    if (summary.rescoreStatus?.status === "running") {
+      return res.status(409).json({ message: "A rescore is already in progress" });
+    }
+    if (!batchJob.results) {
+      return res.json({ jobId: batchJob.id, rescoreCount: 0, message: "No results to rescore." });
+    }
+
+    const allResults: ScoreResult[] = JSON.parse(batchJob.results);
+    const borderline = allResults.filter(
+      (r) => !r.error && (r.score === 2 || r.score === 3 || r.score === 4) && r.scoredBy !== "opus",
+    );
+    if (!borderline.length) {
+      return res.json({ jobId: batchJob.id, rescoreCount: 0, message: "No borderline candidates to rescore." });
+    }
+
+    summary.rescoreStatus = {
+      status: "running",
+      model: "opus",
+      total: borderline.length,
+      completed: 0,
+      failed: 0,
+      changedCount: 0,
+      startedAt: Date.now(),
+    };
+    await storage.updateBatchJob(batchJob.id, { contextSummary: JSON.stringify(summary) });
+    res.json({ jobId: batchJob.id, rescoreCount: borderline.length });
+
+    (async () => {
+      try {
+        const role = await storage.getRole(batchJob.roleId!);
+        if (!role) throw new Error("role not found for batch job");
+        const { hits } = await loadRoleContext(role.roleId);
+        const ctx: RoleContext = {
+          roleName: batchJob.roleName,
+          jd: hits.jd,
+          hmNotes: hits.hm_notes,
+          rubrik: hits.rubrik,
+          hired: hits.hired,
+          notHired: hits.not_hired,
+          transcripts: hits.transcripts,
+          scorecards: hits.scorecards,
+          incumbents: hits.incumbents,
+          benchmarkCandidates: hits.benchmark_candidates,
+          calibrationNotes: await buildCalibrationNotes(role.roleId),
+        };
+
+        const byRow = new Map<number, ScoreResult>();
+        for (const r of allResults) byRow.set(r.rowIndex, r);
+
+        let completed = 0;
+        let failed = 0;
+        let changedCount = 0;
+
+        const persist = async () => {
+          summary.rescoreStatus = { ...summary.rescoreStatus, completed, failed, changedCount };
+          await storage.updateBatchJob(batchJob.id, {
+            contextSummary: JSON.stringify(summary),
+            results: JSON.stringify(Array.from(byRow.values())),
+          });
+        };
+
+        await runWithConcurrency(
+          borderline,
+          SCORE_CONCURRENCY,
+          async (r) => {
+            const candidate: CandidateInput = { rowIndex: r.rowIndex, fields: r.fields || {} };
+            try {
+              const out = await scoreCandidate(ctx, candidate, OPUS_MODEL);
+              const prev = byRow.get(r.rowIndex)!;
+              const originalScore = prev.score;
+              byRow.set(r.rowIndex, {
+                ...prev,
+                score: out.score,
+                reason: out.reason,
+                totalYoe: out.totalYoe ?? prev.totalYoe ?? null,
+                scoredBy: "opus",
+                originalScore,
+              });
+              if (out.score !== originalScore) changedCount++;
+              completed++;
+            } catch (e) {
+              failed++;
+              console.error(`Opus rescore (batch) failed for row ${r.rowIndex}:`, e);
+            }
+          },
+          persist,
+        );
+
+        summary.rescoreStatus = {
+          ...summary.rescoreStatus,
+          status: "completed",
+          completed,
+          failed,
+          changedCount,
+          finishedAt: Date.now(),
+        };
+        await storage.updateBatchJob(batchJob.id, {
+          contextSummary: JSON.stringify(summary),
+          results: JSON.stringify(Array.from(byRow.values())),
+        });
+      } catch (e: any) {
+        console.error(`Rescore batch job ${batchJob.id} crashed:`, e);
+        try {
+          summary.rescoreStatus = {
+            ...(summary.rescoreStatus || {}),
+            status: "failed",
+            error: String(e?.message ?? e),
+            finishedAt: Date.now(),
+          };
+          await storage.updateBatchJob(batchJob.id, { contextSummary: JSON.stringify(summary) });
+        } catch {}
+      }
+    })();
+  });
+
   app.get("/api/jobs", async (_req, res) => {
     // Use the lightweight projection — Past Runs only needs 7 small fields,
     // not the full results JSON blob (which can be megabytes per job).

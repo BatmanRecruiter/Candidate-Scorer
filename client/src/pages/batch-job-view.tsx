@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { apiRequest } from "@/lib/queryClient";
 import { FeedbackButton, CalibrationFeedback } from "@/components/feedback-button";
 import { CalibrationApplied } from "@/components/calibration-applied";
+import { RescoreButton, RescoreStatusBanner } from "@/components/rescore-button";
 import {
   BarChart,
   Bar,
@@ -26,6 +27,7 @@ import {
   XCircle,
   Clock,
   ArrowLeft,
+  Sparkles,
 } from "lucide-react";
 
 interface BatchJobDetail {
@@ -100,8 +102,9 @@ export default function BatchJobView() {
         const data = (await res.json()) as BatchJobDetail;
         if (!stop) setJob(data);
         const terminalStatuses = ["ended", "canceled", "expired", "errored"];
-        if (!stop && !terminalStatuses.includes(data.status)) {
-          setTimeout(poll, 15_000);
+        const rescoreRunning = data.contextSummary?.rescoreStatus?.status === "running";
+        if (!stop && (!terminalStatuses.includes(data.status) || rescoreRunning)) {
+          setTimeout(poll, rescoreRunning ? 3_000 : 15_000);
         }
       } catch {
         if (!stop) setTimeout(poll, 20_000);
@@ -192,11 +195,21 @@ export default function BatchJobView() {
         <div className="flex items-center gap-2">
           <StatusBadge status={job.status} />
           {job.status === "ended" && job.results && (
-            <a href={`${(window as any).__API_BASE__ || ""}/api/batch-jobs/${job.id}/csv`} download>
-              <Button variant="outline" className="gap-2">
-                <Download className="h-4 w-4" /> CSV
-              </Button>
-            </a>
+            <>
+              <RescoreButton
+                jobId={job.id}
+                apiEndpoint={`/api/batch-jobs/${job.id}/rescore-borderline`}
+                completedStatus="ended"
+                status={job.status}
+                results={job.results}
+                rescoreStatus={job.contextSummary?.rescoreStatus}
+              />
+              <a href={`${(window as any).__API_BASE__ || ""}/api/batch-jobs/${job.id}/csv`} download>
+                <Button variant="outline" className="gap-2">
+                  <Download className="h-4 w-4" /> CSV
+                </Button>
+              </a>
+            </>
           )}
         </div>
       </div>
@@ -306,6 +319,7 @@ export default function BatchJobView() {
           </div>
 
           <CalibrationApplied applied={job.contextSummary?.calibrationApplied} />
+          <RescoreStatusBanner status={job.contextSummary?.rescoreStatus} />
 
           {top10.length > 0 && (
             <Card className="mb-6">
