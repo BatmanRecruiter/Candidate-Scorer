@@ -16,6 +16,8 @@ import {
   RefreshCw,
   FolderOpen,
   FileText,
+  Zap,
+  Moon,
 } from "lucide-react";
 
 const CATEGORIES = [
@@ -68,6 +70,7 @@ export default function NewJob() {
 
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [batchMode, setBatchMode] = useState(false);
 
   async function loadRoles() {
     setRolesLoading(true);
@@ -157,6 +160,7 @@ export default function NewJob() {
       const form = new FormData();
       form.append("roleId", roleId);
       form.append("csv", csvFile);
+      if (batchMode) form.append("batchMode", "true");
       const res = await fetch(`${(window as any).__API_BASE__ || ""}/api/jobs`, {
         method: "POST",
         body: form,
@@ -166,7 +170,11 @@ export default function NewJob() {
         throw new Error(t || `Failed (${res.status})`);
       }
       const data = await res.json();
-      navigate(`/jobs/${data.jobId}`);
+      if (batchMode) {
+        navigate(`/batch-jobs/${data.batchJobId}`);
+      } else {
+        navigate(`/jobs/${data.jobId}`);
+      }
     } catch (e: any) {
       toast({ title: "Couldn't start run", description: e.message, variant: "destructive" });
     } finally {
@@ -348,6 +356,54 @@ export default function NewJob() {
         </Card>
       )}
 
+      {/* Processing mode toggle */}
+      <Card className="mt-6">
+        <CardContent className="p-5">
+          <div className="font-medium mb-3 flex items-center gap-2">
+            <span className="h-6 w-6 rounded-full bg-primary/15 text-primary inline-flex items-center justify-center text-xs font-bold">
+              3
+            </span>
+            Processing mode
+          </div>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setBatchMode(false)}
+              className={`flex items-start gap-3 rounded-lg border p-4 text-left transition-colors ${
+                !batchMode
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-muted-foreground/40"
+              }`}
+            >
+              <Zap className={`h-5 w-5 mt-0.5 shrink-0 ${!batchMode ? "text-primary" : "text-muted-foreground"}`} />
+              <div>
+                <div className="font-medium text-sm">Real-time</div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  Results in minutes. Standard API pricing.
+                </div>
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => setBatchMode(true)}
+              className={`flex items-start gap-3 rounded-lg border p-4 text-left transition-colors ${
+                batchMode
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-muted-foreground/40"
+              }`}
+            >
+              <Moon className={`h-5 w-5 mt-0.5 shrink-0 ${batchMode ? "text-primary" : "text-muted-foreground"}`} />
+              <div>
+                <div className="font-medium text-sm">Overnight Batch</div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  Results within 24 hours. 50% cost savings.
+                </div>
+              </div>
+            </button>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="mt-6 flex justify-end">
         <Button
           size="lg"
@@ -357,7 +413,7 @@ export default function NewJob() {
           className="gap-2"
         >
           {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-          Start scoring
+          {batchMode ? "Submit overnight batch" : "Start scoring"}
           <ArrowRight className="h-4 w-4" />
         </Button>
       </div>

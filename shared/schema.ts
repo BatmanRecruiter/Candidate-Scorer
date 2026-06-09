@@ -53,6 +53,26 @@ export const roleFiles = pgTable("role_files", {
 export type RoleFile = typeof roleFiles.$inferSelect;
 export type InsertRoleFile = typeof roleFiles.$inferInsert;
 
+// Batch scoring jobs submitted to Anthropic's Message Batches API.
+export const batchJobs = pgTable("batch_jobs", {
+  id: text("id").primaryKey(),
+  roleId: text("role_id"),
+  roleName: text("role_name").notNull(),
+  anthropicBatchId: text("anthropic_batch_id").notNull(),
+  status: text("status").notNull(), // in_progress | ended | canceling | canceled | expired
+  totalCandidates: integer("total_candidates").notNull(),
+  uploadFilename: text("upload_filename"),
+  inputHeaders: text("input_headers"),
+  candidateData: text("candidate_data").notNull(), // JSON: pre-extracted {rowIndex, candidateName, candidateUrl, candidateCompany, candidateTitle, fields}[]
+  results: text("results"), // JSON ScoreResult[], null until ended and loaded
+  contextSummary: text("context_summary").notNull(),
+  submittedAt: bigint("submitted_at", { mode: "number" }).notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+});
+export type BatchJob = typeof batchJobs.$inferSelect;
+export type InsertBatchJob = typeof batchJobs.$inferInsert;
+
 // Per-role calibration feedback. One row per (role, candidate) thumb/note.
 // Re-submitting feedback for the same candidate updates the existing row.
 export const calibrationFeedback = pgTable("calibration_feedback", {

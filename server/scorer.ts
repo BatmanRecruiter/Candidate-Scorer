@@ -1,7 +1,6 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { cachedMessage } from "./anthropicClient";
 
-const client = new Anthropic();
-const DEFAULT_MODEL = "claude-sonnet-4-6";
+export const DEFAULT_MODEL = "claude-sonnet-4-6";
 export const OPUS_MODEL = "claude-opus-4-7";
 export type ScoringModel = typeof DEFAULT_MODEL | typeof OPUS_MODEL;
 
@@ -62,7 +61,7 @@ function truncate(s: string, max: number) {
   return s.slice(0, max) + `\n…[truncated ${s.length - max} chars]`;
 }
 
-function buildSystemPrompt(ctx: RoleContext): string {
+export function buildSystemPrompt(ctx: RoleContext): string {
   const hasRubrik = ctx.rubrik.length > 0;
   return [
     `You are an expert technical recruiter scoring sourced candidates for the role: "${ctx.roleName}".`,
@@ -153,7 +152,7 @@ function buildSystemPrompt(ctx: RoleContext): string {
   ].join("\n");
 }
 
-function formatCandidate(c: CandidateInput): string {
+export function formatCandidate(c: CandidateInput): string {
   const lines = Object.entries(c.fields)
     .filter(([, v]) => v && String(v).trim().length)
     .map(([k, v]) => `${k}: ${truncate(String(v), 4000)}`);
@@ -163,7 +162,7 @@ function formatCandidate(c: CandidateInput): string {
 // Find the first balanced JSON object in a string that contains a "score" key.
 // Walks brace pairs while respecting string literals and escapes, so it works
 // even if the model writes prose, markdown, or multiple braces before/after.
-function extractScoreJson(text: string): string | null {
+export function extractScoreJson(text: string): string | null {
   for (let start = text.indexOf("{"); start !== -1; start = text.indexOf("{", start + 1)) {
     let depth = 0;
     let inString = false;
@@ -229,11 +228,11 @@ export async function scoreCandidate(
     `\n\nRespond with ONLY the JSON object now. No preamble. No markdown. No reasoning. Start with { and end with }.`;
 
   const resp = await withRetry(() =>
-    client.messages.create({
-      model,
-      max_tokens: 1024,
-      system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+    cachedMessage({
+      system,
       messages: [{ role: "user", content: userMsg }],
+      model,
+      maxTokens: 1024,
     })
   );
 

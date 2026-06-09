@@ -13,7 +13,17 @@ import {
 } from "@shared/column-template";
 import { nanoid } from "nanoid";
 import { storage } from "./storage";
-import { scoreCandidate, OPUS_MODEL, type RoleContext, type CandidateInput } from "./scorer";
+import {
+  scoreCandidate,
+  buildSystemPrompt,
+  formatCandidate,
+  extractScoreJson,
+  DEFAULT_MODEL,
+  OPUS_MODEL,
+  type RoleContext,
+  type CandidateInput,
+} from "./scorer";
+import { client as anthropicClient } from "./anthropicClient";
 import {
   loadRoleContext,
   extractTextFromBuffer,
@@ -55,6 +65,24 @@ async function runWithConcurrency<T, R>(
   return results;
 }
 
+
+// Resolve a logical field (name/url/company/title) from a CSV row with arbitrary headers.
+// Tries each candidate key in order: exact case-insensitive match first, then substring.
+function fieldKey(row: Record<string, string>, candidates: string[]): string {
+  const keys = Object.keys(row);
+  const lcKeys = keys.map((k) => k.toLowerCase());
+  for (const c of candidates) {
+    const lc = c.toLowerCase();
+    const exactIdx = lcKeys.findIndex((k) => k === lc);
+    if (exactIdx !== -1 && row[keys[exactIdx]]) return row[keys[exactIdx]];
+  }
+  for (const c of candidates) {
+    const lc = c.toLowerCase();
+    const subIdx = lcKeys.findIndex((k) => k.includes(lc));
+    if (subIdx !== -1 && row[keys[subIdx]]) return row[keys[subIdx]];
+  }
+  return "";
+}
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
@@ -279,6 +307,97 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ message: "Batch size exceeds 500" });
       }
 
+      // -----------------------------------------------------------------------
+      // OVERNIGHT BATCH MODE — submit to Anthropic Message Batches API
+      // -----------------------------------------------------------------------
+      const batchMode = req.body.batchMode === "true";
+      if (batchMode) {
+        const { hits, files } = await loadRoleContext(role.roleId);
+        const baseSummary = buildSummary(files, hits);
+        const calibrationNotes = await buildCalibrationNotes(role.roleId);
+        const calibrationApplied = {
+          count: calibrationNotes.length,
+          totalChars: calibrationNotes.reduce((n, s) => n + s.length, 0),
+          notes: calibrationNotes,
+        };
+        const contextSummary = { ...baseSummary, calibrationApplied };
+
+        const ctx: RoleContext = {
+          roleName: role.roleName,
+          jd: hits.jd,
+          hmNotes: hits.hm_notes,
+          rubrik: hits.rubrik,
+          hired: hits.hired,
+          notHired: hits.not_hired,
+          transcripts: hits.transcripts,
+          scorecards: hits.scorecards,
+          incumbents: hits.incumbents,
+          benchmarkCandidates: hits.benchmark_candidates,
+          calibrationNotes,
+        };
+        const systemPrompt = buildSystemPrompt(ctx);
+
+        // Pre-extract display fields (name, url, company, title) from each row
+        // so we have them available when results come back from Anthropic later.
+        const candidateData = candidateRows.map((row, i) => ({
+          rowIndex: i + 1,
+          candidateName: fieldKey(row, ["Candidate Name", "Full Name", "Name", "Candidate", "candidate_name"]),
+          candidateUrl: fieldKey(row, ["Candidate LinkedIn URL", "LinkedIn URL", "LinkedIn", "Profile URL", "URL", "profile_url"]),
+          candidateCompany: fieldKey(row, ["Company1", "Current Company", "Company", "company"]),
+          candidateTitle: fieldKey(row, ["Company1 Title", "Current Title", "Candidate Profile Headline", "Headline", "Title", "headline"]),
+          fields: row,
+        }));
+
+        const batchRequests = candidateData.map((c) => ({
+          custom_id: `row-${c.rowIndex}`,
+          params: {
+            model: DEFAULT_MODEL,
+            max_tokens: 1024,
+            system: [
+              {
+                type: "text" as const,
+                text: systemPrompt,
+                cache_control: { type: "ephemeral" as const, ttl: "1h" as const },
+              },
+            ],
+            messages: [
+              {
+                role: "user" as const,
+                content:
+                  `Candidate to evaluate (all available LinkedIn fields):\n` +
+                  formatCandidate({ rowIndex: c.rowIndex, fields: c.fields }) +
+                  `\n\nRespond with ONLY the JSON object now. No preamble. No markdown. No reasoning. Start with { and end with }.`,
+              },
+            ],
+          },
+        }));
+
+        const batch = await anthropicClient.messages.batches.create({ requests: batchRequests });
+
+        const batchJobId = nanoid(10);
+        const now = Date.now();
+        await storage.createBatchJob({
+          id: batchJobId,
+          roleId: role.roleId,
+          roleName: role.roleName,
+          anthropicBatchId: batch.id,
+          status: batch.processing_status,
+          totalCandidates: candidateRows.length,
+          uploadFilename: req.file.originalname,
+          inputHeaders: JSON.stringify(headers),
+          candidateData: JSON.stringify(candidateData),
+          results: null,
+          contextSummary: JSON.stringify(contextSummary),
+          submittedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        console.log(`[batch] submitted ${candidateRows.length} candidates, anthropicBatchId=${batch.id}, batchJobId=${batchJobId}`);
+        return res.json({ batchJobId, anthropicBatchId: batch.id });
+      }
+
+      // -----------------------------------------------------------------------
       // Create the job placeholder immediately and respond so the UI can navigate
       // to the run page right away. Loading Drive context can take 30+ seconds for
       // roles with many files, and we don't want the browser to hang on the POST.
@@ -590,6 +709,201 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // -------------------------------------------------------------------------
+  // Batch jobs (Anthropic Message Batches API)
+  // -------------------------------------------------------------------------
+
+  app.get("/api/batch-jobs", async (_req, res) => {
+    const rows = await storage.listBatchJobs();
+    res.json({
+      batchJobs: rows.map((b) => ({
+        id: b.id,
+        roleId: b.roleId,
+        roleName: b.roleName,
+        anthropicBatchId: b.anthropicBatchId,
+        status: b.status,
+        totalCandidates: b.totalCandidates,
+        uploadFilename: b.uploadFilename,
+        submittedAt: b.submittedAt,
+        createdAt: b.createdAt,
+      })),
+    });
+  });
+
+  app.get("/api/batch-jobs/:id", async (req, res) => {
+    let batchJob = await storage.getBatchJob(req.params.id);
+    if (!batchJob) return res.status(404).json({ message: "Batch job not found" });
+
+    // Poll Anthropic if job is still in a non-terminal state
+    const terminalStatuses = ["ended", "canceled", "expired", "errored"];
+    if (!terminalStatuses.includes(batchJob.status)) {
+      try {
+        const remote = await anthropicClient.messages.batches.retrieve(batchJob.anthropicBatchId);
+        if (remote.processing_status !== batchJob.status) {
+          batchJob = (await storage.updateBatchJob(batchJob.id, { status: remote.processing_status })) ?? batchJob;
+        }
+      } catch (e) {
+        console.error("[batch] poll failed:", e);
+      }
+    }
+
+    // If ended and results not yet loaded, fetch them from Anthropic
+    if (batchJob.status === "ended" && !batchJob.results) {
+      try {
+        type CandidateRow = {
+          rowIndex: number;
+          candidateName: string;
+          candidateUrl: string;
+          candidateCompany: string;
+          candidateTitle: string;
+          fields: Record<string, string>;
+        };
+        const candidateData: CandidateRow[] = JSON.parse(batchJob.candidateData);
+        const candidateMap = new Map(candidateData.map((c) => [c.rowIndex, c]));
+
+        const scoreResults: ScoreResult[] = [];
+        const resultsIterable = await anthropicClient.messages.batches.results(batchJob.anthropicBatchId);
+        for await (const result of resultsIterable) {
+          const rowIndex = parseInt(result.custom_id.replace("row-", ""), 10);
+          const c = candidateMap.get(rowIndex);
+          if (!c) continue;
+
+          if (result.result.type === "succeeded") {
+            const textBlock = result.result.message.content.find((b: any) => b.type === "text") as
+              | { type: "text"; text: string }
+              | undefined;
+            const raw = textBlock?.text ?? "";
+            const found = extractScoreJson(raw);
+            if (found) {
+              let parsed: any;
+              try { parsed = JSON.parse(found); } catch { parsed = null; }
+              if (parsed) {
+                const score = Math.max(1, Math.min(5, Math.round(Number(parsed.score))));
+                const reason = String(parsed.reason ?? "").trim() || "No reason provided.";
+                let totalYoe: number | null = null;
+                if (parsed.totalYoe != null) {
+                  const n = Number(parsed.totalYoe);
+                  if (Number.isFinite(n) && n >= 0) totalYoe = Math.round(n * 100) / 100;
+                }
+                scoreResults.push({
+                  rowIndex: c.rowIndex,
+                  candidateName: c.candidateName,
+                  candidateUrl: c.candidateUrl,
+                  candidateCompany: c.candidateCompany,
+                  candidateTitle: c.candidateTitle,
+                  fields: c.fields,
+                  score,
+                  reason,
+                  totalYoe,
+                  scoredBy: "sonnet",
+                });
+                continue;
+              }
+            }
+            scoreResults.push({
+              rowIndex: c.rowIndex,
+              candidateName: c.candidateName,
+              candidateUrl: c.candidateUrl,
+              candidateCompany: c.candidateCompany,
+              candidateTitle: c.candidateTitle,
+              fields: c.fields,
+              score: 0 as any,
+              reason: "",
+              error: `No parseable JSON in response: ${raw.slice(0, 200)}`,
+            });
+          } else {
+            scoreResults.push({
+              rowIndex: c.rowIndex,
+              candidateName: c.candidateName,
+              candidateUrl: c.candidateUrl,
+              candidateCompany: c.candidateCompany,
+              candidateTitle: c.candidateTitle,
+              fields: c.fields,
+              score: 0 as any,
+              reason: "",
+              error: `Batch request ${result.result.type}`,
+            });
+          }
+        }
+        scoreResults.sort((a, b) => a.rowIndex - b.rowIndex);
+        const resultsJson = JSON.stringify(scoreResults);
+        batchJob = (await storage.updateBatchJob(batchJob.id, { results: resultsJson })) ?? batchJob;
+        batchJob.results = resultsJson;
+        console.log(`[batch] loaded ${scoreResults.length} results for batchJobId=${batchJob.id}`);
+      } catch (e) {
+        console.error("[batch] results load failed:", e);
+      }
+    }
+
+    return res.json({
+      id: batchJob.id,
+      roleId: batchJob.roleId,
+      roleName: batchJob.roleName,
+      anthropicBatchId: batchJob.anthropicBatchId,
+      status: batchJob.status,
+      totalCandidates: batchJob.totalCandidates,
+      uploadFilename: batchJob.uploadFilename,
+      contextSummary: JSON.parse(batchJob.contextSummary),
+      results: batchJob.results ? (JSON.parse(batchJob.results) as ScoreResult[]) : null,
+      submittedAt: batchJob.submittedAt,
+      createdAt: batchJob.createdAt,
+      updatedAt: batchJob.updatedAt,
+    });
+  });
+
+  app.get("/api/batch-jobs/:id/csv", async (req, res) => {
+    const batchJob = await storage.getBatchJob(req.params.id);
+    if (!batchJob) return res.status(404).send("Not found");
+    if (!batchJob.results) return res.status(400).send("Results not ready yet");
+
+    const results: ScoreResult[] = JSON.parse(batchJob.results);
+    const sorted = results.slice().sort((a, b) => a.rowIndex - b.rowIndex);
+    const originalHeaders: string[] = batchJob.inputHeaders ? safeJsonArray(batchJob.inputHeaders) : [];
+    const seen = new Set<string>(originalHeaders.map((h) => h.toLowerCase()));
+    for (const r of sorted) {
+      for (const k of Object.keys(r.fields || {})) {
+        if (!seen.has(k.toLowerCase())) {
+          originalHeaders.push(k);
+          seen.add(k.toLowerCase());
+        }
+      }
+    }
+    const templateMap = mapTemplateToInputs(originalHeaders);
+    const headerRow = COLUMN_TEMPLATE.map((h) => (isBlankHeader(h) ? "" : h));
+    const lines = [headerRow.map(csvCell).join(",")];
+    for (const r of sorted) {
+      const fields = r.fields || {};
+      const row = COLUMN_TEMPLATE.map((tmpl, i) => {
+        if (isBlankHeader(tmpl)) return "";
+        if (isScoreHeader(tmpl)) return r.error ? "" : r.score ?? "";
+        if (isReasonHeader(tmpl)) return r.error ? r.error : r.reason ?? "";
+        if (isTotalYoeHeader(tmpl)) {
+          if (r.error || r.totalYoe == null) return "";
+          return formatTemplateCell(tmpl, String(r.totalYoe), fields);
+        }
+        const inputCol = templateMap[i];
+        let raw = "";
+        if (inputCol) {
+          const exact = fields[inputCol];
+          if (exact != null) {
+            raw = String(exact);
+          } else {
+            const key = Object.keys(fields).find((k) => k.toLowerCase() === inputCol.toLowerCase());
+            raw = key ? String(fields[key] ?? "") : "";
+          }
+        }
+        return formatTemplateCell(tmpl, raw, fields);
+      });
+      lines.push(row.map(csvCell).join(","));
+    }
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${batchJob.roleName.replace(/[^a-z0-9_-]+/gi, "_")}-batch-scores.csv"`,
+    );
+    res.send(lines.join("\n"));
+  });
+
+  // -------------------------------------------------------------------------
   // Calibration feedback
   // -------------------------------------------------------------------------
 
@@ -783,25 +1097,6 @@ async function runScoringJob(args: {
   const results: ScoreResult[] = [];
   let completed = 0;
   let failed = 0;
-
-  // Resolve a logical field (name/url/company/title) from a row of arbitrary
-  // headers. Tries each candidate in order: first exact case-insensitive match,
-  // then substring contains. Returns the first non-empty value found.
-  const fieldKey = (row: Record<string, string>, candidates: string[]) => {
-    const keys = Object.keys(row);
-    const lcKeys = keys.map((k) => k.toLowerCase());
-    for (const c of candidates) {
-      const lc = c.toLowerCase();
-      const exactIdx = lcKeys.findIndex((k) => k === lc);
-      if (exactIdx !== -1 && row[keys[exactIdx]]) return row[keys[exactIdx]];
-    }
-    for (const c of candidates) {
-      const lc = c.toLowerCase();
-      const subIdx = lcKeys.findIndex((k) => k.includes(lc));
-      if (subIdx !== -1 && row[keys[subIdx]]) return row[keys[subIdx]];
-    }
-    return "";
-  };
 
   await runWithConcurrency(
     candidateRows,

@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Sparkles, ListChecks, Plus, FolderCog } from "lucide-react";
+import { Sparkles, ListChecks, Plus, FolderCog, Moon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -7,6 +7,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const nav = [
     { href: "/new", label: "New Run", icon: Plus },
     { href: "/jobs", label: "Past Runs", icon: ListChecks },
+    { href: "/batch-jobs", label: "Batch Results", icon: Moon },
     { href: "/manage", label: "Manage Roles", icon: FolderCog },
   ];
 

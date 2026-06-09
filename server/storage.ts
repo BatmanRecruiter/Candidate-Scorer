@@ -6,6 +6,7 @@ import {
   roles,
   roleFiles,
   calibrationFeedback,
+  batchJobs,
   type Job,
   type InsertJob,
   type Role,
@@ -14,6 +15,8 @@ import {
   type InsertRoleFile,
   type CalibrationFeedback,
   type InsertCalibrationFeedback,
+  type BatchJob,
+  type InsertBatchJob,
 } from "@shared/schema";
 
 export type JobSummary = {
@@ -55,6 +58,11 @@ export interface IStorage {
   ): Promise<CalibrationFeedback | undefined>;
   listFeedbackForRole(roleId: string, limit?: number): Promise<CalibrationFeedback[]>;
   deleteFeedback(id: string): Promise<void>;
+
+  createBatchJob(job: InsertBatchJob): Promise<BatchJob>;
+  getBatchJob(id: string): Promise<BatchJob | undefined>;
+  updateBatchJob(id: string, patch: Partial<BatchJob>): Promise<BatchJob | undefined>;
+  listBatchJobs(limit?: number): Promise<BatchJob[]>;
 }
 
 export const storage: IStorage = {
@@ -184,5 +192,22 @@ export const storage: IStorage = {
   },
   async deleteFeedback(id: string) {
     await db.delete(calibrationFeedback).where(eq(calibrationFeedback.id, id));
+  },
+
+  async createBatchJob(job: InsertBatchJob) {
+    const [row] = await db.insert(batchJobs).values(job).returning();
+    return row;
+  },
+  async getBatchJob(id: string) {
+    const [row] = await db.select().from(batchJobs).where(eq(batchJobs.id, id));
+    return row;
+  },
+  async updateBatchJob(id: string, patch: Partial<BatchJob>) {
+    const next = { ...patch, updatedAt: Date.now() };
+    const [row] = await db.update(batchJobs).set(next).where(eq(batchJobs.id, id)).returning();
+    return row;
+  },
+  async listBatchJobs(limit = 50) {
+    return db.select().from(batchJobs).orderBy(desc(batchJobs.createdAt)).limit(limit);
   },
 };
