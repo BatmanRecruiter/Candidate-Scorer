@@ -192,7 +192,7 @@ export default function BatchJobView() {
         <div className="flex items-center gap-2">
           <StatusBadge status={job.status} />
           {job.status === "ended" && job.results && (
-            <a href={`${(window as any).__API_BASE__ || ""}/api/batch-jobs/${job.id}/csv`}>
+            <a href={`${(window as any).__API_BASE__ || ""}/api/batch-jobs/${job.id}/csv`} download>
               <Button variant="outline" className="gap-2">
                 <Download className="h-4 w-4" /> CSV
               </Button>

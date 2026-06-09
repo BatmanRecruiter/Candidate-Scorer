@@ -171,6 +171,7 @@ export default function JobView() {
           <RescoreButton job={job} />
           <a
             href={`${(window as any).__API_BASE__ || ""}/api/jobs/${job.id}/csv`}
+            download
             data-testid="link-download-csv"
           >
             <Button variant="outline" className="gap-2">
