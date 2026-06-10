@@ -95,7 +95,7 @@ export function FeedbackButton({
         const data = await res.json().catch(() => ({}));
         throw new Error((data as any).message || `Failed (${res.status})`);
       }
-      toast({ title: "Feedback saved", description: "Future runs of this role will see it." });
+      toast({ title: "Feedback saved", description: "Future runs of this role will see it.", duration: 1500 });
       onChanged();
       setOpen(false);
     } catch (e: any) {
@@ -110,7 +110,7 @@ export function FeedbackButton({
     setSaving(true);
     try {
       await apiRequest("DELETE", `/api/feedback/${feedback.id}`);
-      toast({ title: "Feedback removed" });
+      toast({ title: "Feedback removed", duration: 1500 });
       onChanged();
       setOpen(false);
     } catch (e: any) {
