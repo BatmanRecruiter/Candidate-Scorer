@@ -23,7 +23,7 @@ import {
   type RoleContext,
   type CandidateInput,
 } from "./scorer";
-import { client as anthropicClient } from "./anthropicClient";
+import { client as anthropicClient, cachedMessage } from "./anthropicClient";
 import {
   loadRoleContext,
   extractTextFromBuffer,
@@ -47,20 +47,33 @@ async function runWithConcurrency<T, R>(
 ) {
   const results: (R | null)[] = new Array(items.length).fill(null);
   let cursor = 0;
+  async function processOne(): Promise<boolean> {
+    const i = cursor++;
+    if (i >= items.length) return false;
+    try {
+      const r = await fn(items[i], i);
+      results[i] = r;
+      await onItemDone?.(r, null, i);
+    } catch (e: any) {
+      await onItemDone?.(null, e, i);
+    }
+    return true;
+  }
+  // WARM-THEN-RAMP: process the first item alone before fanning out. The first
+  // call writes the shared prompt cache; the concurrent workers that follow then
+  // all read it at 0.1x. Launching all workers at once instead makes the first
+  // `limit` calls race and each pay the full cache-write price (none can read a
+  // cache the others are still writing).
+  if (items.length > 0) await processOne();
   async function worker() {
-    while (true) {
-      const i = cursor++;
-      if (i >= items.length) return;
-      try {
-        const r = await fn(items[i], i);
-        results[i] = r;
-        await onItemDone?.(r, null, i);
-      } catch (e: any) {
-        await onItemDone?.(null, e, i);
-      }
+    while (await processOne()) {
+      /* keep pulling until items are exhausted */
     }
   }
-  const workers = Array.from({ length: Math.min(limit, items.length) }, worker);
+  const workers = Array.from(
+    { length: Math.min(limit, Math.max(0, items.length - 1)) },
+    worker,
+  );
   await Promise.all(workers);
   return results;
 }
@@ -371,6 +384,27 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             ],
           },
         }));
+
+        // PRE-WARM THE CACHE before submitting the batch.
+        // A batch processes its requests in PARALLEL, so they race each other and
+        // none can read a cache the others are still writing — without this, most
+        // of the batch pays the full (here 2x, 1h-TTL) write price on the big
+        // reference prompt instead of the 0.1x read. By writing the cache once,
+        // synchronously, first, every batched request reads the already-warm entry
+        // at 0.1x AND still gets the 50% batch discount. ttl "1h" keeps the entry
+        // alive until Anthropic's workers pick up the batch (usually minutes).
+        // Best-effort: if it throws, we still submit the batch.
+        try {
+          await cachedMessage({
+            system: systemPrompt,
+            messages: [{ role: "user", content: "warmup" }],
+            model: DEFAULT_MODEL,
+            maxTokens: 1,
+            ttl: "1h",
+          });
+        } catch (e) {
+          console.error("[batch] cache pre-warm failed (continuing):", e);
+        }
 
         const batch = await anthropicClient.messages.batches.create({ requests: batchRequests });
 
