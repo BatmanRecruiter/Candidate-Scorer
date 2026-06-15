@@ -24,6 +24,7 @@ import {
   type CandidateInput,
 } from "./scorer";
 import { client as anthropicClient, cachedMessage } from "./anthropicClient";
+import { shouldSummarize, summarizeForScoring } from "./summarize";
 import {
   loadRoleContext,
   extractTextFromBuffer,
@@ -244,6 +245,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           createdAt: Date.now(),
         });
 
+        // Large reference docs (transcripts, resumes, scorecards, …) get
+        // distilled to a scoring-focused summary once, here, so every future
+        // run sends fewer tokens. Non-destructive: the original text stays in
+        // contentText as a fallback, and a failed summary just keeps the full
+        // text — it never blocks the upload.
+        let summarized = false;
+        if (shouldSummarize(category, contentText)) {
+          try {
+            const summary = await summarizeForScoring({
+              fileName: originalname,
+              category: category!,
+              text: contentText,
+            });
+            await storage.updateRoleFileSummary(file.id, summary);
+            summarized = true;
+          } catch (e) {
+            console.error(`summary failed for ${originalname}:`, e);
+          }
+        }
+
         res.json({
           file: {
             fileId: file.id,
@@ -252,6 +273,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             autoDetected: file.autoDetected === 1,
             byteSize: file.byteSize,
             createdAt: file.createdAt,
+            summarized,
           },
         });
       } catch (e: any) {

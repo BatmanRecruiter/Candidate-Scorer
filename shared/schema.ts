@@ -46,6 +46,10 @@ export const roleFiles = pgTable("role_files", {
   category: text("category"), // null = uncategorized
   autoDetected: integer("auto_detected").notNull().default(1), // 1 = auto; 0 = user-set
   contentText: text("content_text").notNull(),
+  // Optional scoring-focused summary of contentText. When present it is used in
+  // the scoring prompt instead of the full text to cut tokens. null = not
+  // summarized; the prompt falls back to contentText.
+  summaryText: text("summary_text"),
   byteSize: integer("byte_size").notNull(),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });

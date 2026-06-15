@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRoute } from "wouter";
 import { AppShell } from "@/components/app-shell";
 import { Card, CardContent } from "@/components/ui/card";
@@ -86,6 +86,19 @@ export default function JobView() {
     };
   }, [jobId]);
 
+  // When an Opus rescore finishes, the page needs a fresh load to pull in the
+  // updated scores. Track the running->completed transition and reload once.
+  const wasRescoringRef = useRef(false);
+  useEffect(() => {
+    const s = job?.contextSummary?.rescoreStatus?.status;
+    if (s === "running") {
+      wasRescoringRef.current = true;
+    } else if (wasRescoringRef.current && s === "completed") {
+      wasRescoringRef.current = false;
+      window.location.reload();
+    }
+  }, [job?.contextSummary?.rescoreStatus?.status]);
+
   const dist = useMemo(() => {
     const buckets: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
     if (job) {
@@ -157,6 +170,14 @@ export default function JobView() {
   const pct = job.total === 0 ? 0 : Math.round((job.completed + job.failed) / job.total * 100);
   const running = job.status === "running" || job.status === "queued";
 
+  // While Opus is re-scoring borderline candidates, repurpose the progress bar
+  // to track that run instead of the (already-finished) original scoring run.
+  const rescoreStatus = job.contextSummary?.rescoreStatus as RescoreStatus | undefined;
+  const rescoreRunning = rescoreStatus?.status === "running";
+  const rescoreDone = (rescoreStatus?.completed ?? 0) + (rescoreStatus?.failed ?? 0);
+  const rescoreTotal = rescoreStatus?.total ?? 0;
+  const rescorePct = rescoreTotal === 0 ? 0 : Math.round((rescoreDone / rescoreTotal) * 100);
+
   return (
     <AppShell>
       <div className="flex items-start justify-between gap-4 mb-6">
@@ -204,12 +225,16 @@ export default function JobView() {
       <Card className="mb-6">
         <CardContent className="p-5">
           <div className="flex items-center justify-between mb-2">
-            <div className="text-sm font-medium">Progress</div>
+            <div className="text-sm font-medium">
+              {rescoreRunning ? "Opus Rerun Progress" : "Progress"}
+            </div>
             <div className="text-sm text-muted-foreground">
-              {job.completed + job.failed} / {job.total} ({pct}%) · {job.failed} failed
+              {rescoreRunning
+                ? `${rescoreDone} / ${rescoreTotal} (${rescorePct}%) · ${rescoreStatus?.failed ?? 0} failed`
+                : `${job.completed + job.failed} / ${job.total} (${pct}%) · ${job.failed} failed`}
             </div>
           </div>
-          <Progress value={pct} />
+          <Progress value={rescoreRunning ? rescorePct : pct} />
         </CardContent>
       </Card>
 
