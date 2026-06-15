@@ -49,6 +49,7 @@ export interface IStorage {
   listRoleFiles(roleId: string): Promise<RoleFile[]>;
   createRoleFile(file: InsertRoleFile): Promise<RoleFile>;
   updateRoleFileCategory(id: string, category: string | null, autoDetected: boolean): Promise<RoleFile | undefined>;
+  updateRoleFileSummary(id: string, summaryText: string | null): Promise<RoleFile | undefined>;
   deleteRoleFile(id: string): Promise<void>;
 
   upsertFeedback(fb: InsertCalibrationFeedback): Promise<CalibrationFeedback>;
@@ -131,6 +132,14 @@ export const storage: IStorage = {
     const [row] = await db
       .update(roleFiles)
       .set({ category, autoDetected: autoDetected ? 1 : 0 })
+      .where(eq(roleFiles.id, id))
+      .returning();
+    return row;
+  },
+  async updateRoleFileSummary(id: string, summaryText: string | null) {
+    const [row] = await db
+      .update(roleFiles)
+      .set({ summaryText })
       .where(eq(roleFiles.id, id))
       .returning();
     return row;
