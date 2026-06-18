@@ -29,6 +29,19 @@ export type JobSummary = {
   createdAt: number;
 };
 
+export type BatchJobSummary = Pick<
+  BatchJob,
+  | "id"
+  | "roleId"
+  | "roleName"
+  | "anthropicBatchId"
+  | "status"
+  | "totalCandidates"
+  | "uploadFilename"
+  | "submittedAt"
+  | "createdAt"
+>;
+
 const sql = neon(process.env.DATABASE_URL!);
 export const db = drizzle({ client: sql });
 
@@ -63,7 +76,7 @@ export interface IStorage {
   createBatchJob(job: InsertBatchJob): Promise<BatchJob>;
   getBatchJob(id: string): Promise<BatchJob | undefined>;
   updateBatchJob(id: string, patch: Partial<BatchJob>): Promise<BatchJob | undefined>;
-  listBatchJobs(limit?: number): Promise<BatchJob[]>;
+  listBatchJobs(limit?: number): Promise<BatchJobSummary[]>;
 }
 
 export const storage: IStorage = {
@@ -216,7 +229,21 @@ export const storage: IStorage = {
     const [row] = await db.update(batchJobs).set(next).where(eq(batchJobs.id, id)).returning();
     return row;
   },
-  async listBatchJobs(limit = 50) {
-    return db.select().from(batchJobs).orderBy(desc(batchJobs.createdAt)).limit(limit);
+  async listBatchJobs(limit = 50): Promise<BatchJobSummary[]> {
+    return db
+      .select({
+        id: batchJobs.id,
+        roleId: batchJobs.roleId,
+        roleName: batchJobs.roleName,
+        anthropicBatchId: batchJobs.anthropicBatchId,
+        status: batchJobs.status,
+        totalCandidates: batchJobs.totalCandidates,
+        uploadFilename: batchJobs.uploadFilename,
+        submittedAt: batchJobs.submittedAt,
+        createdAt: batchJobs.createdAt,
+      })
+      .from(batchJobs)
+      .orderBy(desc(batchJobs.createdAt))
+      .limit(limit);
   },
 };
