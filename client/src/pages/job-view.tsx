@@ -26,6 +26,7 @@ import {
   ExternalLink,
   AlertTriangle,
   Sparkles,
+  CircleStop,
 } from "lucide-react";
 
 interface JobData {
@@ -190,6 +191,7 @@ export default function JobView() {
         </div>
         <div className="flex items-center gap-2">
           <StatusBadge status={job.status} />
+          {running && <StopButton jobId={job.id} />}
           <RescoreButton
             jobId={job.id}
             apiEndpoint={`/api/jobs/${job.id}/rescore-borderline`}
@@ -432,10 +434,55 @@ export default function JobView() {
 function StatusBadge({ status }: { status: string }) {
   if (status === "completed") return <Badge className="bg-primary text-primary-foreground">Complete</Badge>;
   if (status === "failed") return <Badge variant="destructive">Failed</Badge>;
+  if (status === "stopped") return <Badge variant="secondary">Stopped</Badge>;
   return (
     <Badge variant="outline" className="gap-1">
       <Loader2 className="h-3 w-3 animate-spin" /> Running
     </Badge>
+  );
+}
+
+// Stop a running scoring run. The loop finishes any in-flight candidates and
+// keeps their scores, so this button leaves partial results in place. Stays in
+// a "Stopping…" state until the poll sees the job leave the running state.
+function StopButton({ jobId }: { jobId: string }) {
+  const { toast } = useToast();
+  const [stopping, setStopping] = useState(false);
+
+  async function handleStop() {
+    if (stopping) return;
+    setStopping(true);
+    try {
+      await apiRequest("POST", `/api/jobs/${jobId}/cancel`);
+      toast({
+        title: "Stopping run",
+        description: "Finishing in-flight candidates, then stopping. Scores so far are kept.",
+      });
+    } catch (e: any) {
+      setStopping(false);
+      toast({
+        title: "Couldn't stop run",
+        description: String(e?.message ?? e),
+        variant: "destructive",
+      });
+    }
+  }
+
+  return (
+    <Button
+      variant="destructive"
+      className="gap-2"
+      onClick={handleStop}
+      disabled={stopping}
+      data-testid="button-stop-run"
+    >
+      {stopping ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
+      ) : (
+        <CircleStop className="h-4 w-4" />
+      )}
+      {stopping ? "Stopping…" : "Stop run"}
+    </Button>
   );
 }
 

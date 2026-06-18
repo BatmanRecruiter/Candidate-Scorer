@@ -40,15 +40,26 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 
 
 const SCORE_CONCURRENCY = 2;
 
+// Job IDs for which the user has requested a stop. The scoring loop checks this
+// before pulling each new candidate and bails out, so we don't burn API spend
+// finishing a run the user has already judged bad (e.g. a wrong rubric). This is
+// deliberately in-memory: the signal only matters to the loop running in this
+// process, and a restart kills the run anyway.
+const stopRequestedJobs = new Set<string>();
+
 async function runWithConcurrency<T, R>(
   items: T[],
   limit: number,
   fn: (item: T, i: number) => Promise<R>,
   onItemDone?: (result: R | null, error: Error | null, i: number) => void | Promise<void>,
+  shouldStop?: () => boolean,
 ) {
   const results: (R | null)[] = new Array(items.length).fill(null);
   let cursor = 0;
   async function processOne(): Promise<boolean> {
+    // Stop pulling new work as soon as a stop is requested. Items already in
+    // flight (at most `limit`) finish naturally, so partial results are kept.
+    if (shouldStop?.()) return false;
     const i = cursor++;
     if (i >= items.length) return false;
     try {
@@ -508,6 +519,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           });
         } catch (e: any) {
           console.error(`Job ${jobId} crashed:`, e);
+          stopRequestedJobs.delete(jobId);
           await storage.updateJob(jobId, { status: "failed", error: String(e?.message ?? e) });
         }
       })();
@@ -539,6 +551,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       createdAt: job.createdAt,
       updatedAt: job.updatedAt,
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // Stop a running job. Sets an in-memory flag the scoring loop checks before
+  // pulling each candidate; the loop then exits and marks the job "stopped",
+  // keeping whatever results it already produced. Used when the user spots a bad
+  // run (e.g. a wrong rubric) and wants to stop spending on it.
+  app.post("/api/jobs/:id/cancel", async (req, res) => {
+    const job = await storage.getJob(req.params.id);
+    if (!job) return res.status(404).json({ message: "Job not found" });
+    if (job.status !== "running" && job.status !== "queued") {
+      return res.status(400).json({ message: "Job is not running" });
+    }
+    stopRequestedJobs.add(job.id);
+    return res.json({ ok: true });
   });
 
   // -------------------------------------------------------------------------
@@ -1353,10 +1380,12 @@ async function runScoringJob(args: {
         results: JSON.stringify(results),
       });
     },
+    () => stopRequestedJobs.has(jobId),
   );
 
+  const stopped = stopRequestedJobs.delete(jobId);
   await storage.updateJob(jobId, {
-    status: "completed",
+    status: stopped ? "stopped" : "completed",
     completedCandidates: completed,
     failedCandidates: failed,
     results: JSON.stringify(results),
