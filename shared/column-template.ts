@@ -19,7 +19,6 @@ export const COLUMN_TEMPLATE: string[] = [
   "Company1",
   "Title1",
   "YAC",
-  "Company1 Start Date",
   "Company1 End Date",
   "Company2",
   "Company2 Title",

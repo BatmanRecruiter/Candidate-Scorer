@@ -20,30 +20,7 @@ import {
   Moon,
 } from "lucide-react";
 
-const CATEGORIES = [
-  "jd",
-  "hm_notes",
-  "rubrik",
-  "hired",
-  "not_hired",
-  "transcripts",
-  "scorecards",
-  "incumbents",
-  "benchmark_candidates",
-] as const;
-type Category = (typeof CATEGORIES)[number];
-
-const CATEGORY_LABEL: Record<Category, string> = {
-  jd: "Job description",
-  hm_notes: "HM notes",
-  rubrik: "Scoring rubrik",
-  hired: "Hired resumes",
-  not_hired: "Not-hired resumes",
-  transcripts: "Interview transcripts",
-  scorecards: "Scorecards",
-  incumbents: "Incumbent profiles",
-  benchmark_candidates: "Benchmark candidates",
-};
+import { CATEGORIES, CATEGORY_LABEL, type Category } from "@shared/categories";
 
 interface RoleSummary {
   roleId: string;
@@ -186,17 +163,10 @@ export default function NewJob() {
   const uncategorized = previewFiles.filter((f) => !f.category);
   const categorized = previewFiles.filter((f) => f.category);
 
-  const counts: Record<Category, number> = {
-    jd: 0,
-    hm_notes: 0,
-    rubrik: 0,
-    hired: 0,
-    not_hired: 0,
-    transcripts: 0,
-    scorecards: 0,
-    incumbents: 0,
-    benchmark_candidates: 0,
-  };
+  const counts = Object.fromEntries(CATEGORIES.map((c) => [c, 0])) as Record<
+    Category,
+    number
+  >;
   for (const f of categorized) counts[f.category!]++;
 
   return (

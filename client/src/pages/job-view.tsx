@@ -60,6 +60,17 @@ export default function JobView() {
   const jobId = params?.id;
   const [job, setJob] = useState<JobData | null>(null);
 
+  // Bumping this restarts the poll loop. Needed because the loop stops once the
+  // original run completes, but the user can later kick off an Opus rescore.
+  const [pollNonce, setPollNonce] = useState(0);
+  // True from the moment a rescore is requested until we observe it finish, so
+  // the (just-restarted) poll loop keeps going through the brief window before
+  // the server flips rescoreStatus to "running".
+  const pendingRescoreRef = useRef(false);
+  // When an Opus rescore finishes, the page needs a fresh load to pull in the
+  // updated scores. Track the running->completed transition and reload once.
+  const wasRescoringRef = useRef(false);
+
   useEffect(() => {
     if (!jobId) return;
     let stop = false;
@@ -69,11 +80,16 @@ export default function JobView() {
         if (!res.ok) return;
         const data = (await res.json()) as JobData;
         if (!stop) setJob(data);
-        const rescoreRunning =
-          data.contextSummary?.rescoreStatus?.status === "running";
+        const rescoreState = data.contextSummary?.rescoreStatus?.status;
+        if (rescoreState === "completed" || rescoreState === "failed") {
+          pendingRescoreRef.current = false;
+        }
         if (
           !stop &&
-          (data.status === "running" || data.status === "queued" || rescoreRunning)
+          (data.status === "running" ||
+            data.status === "queued" ||
+            rescoreState === "running" ||
+            pendingRescoreRef.current)
         ) {
           setTimeout(poll, 2000);
         }
@@ -85,11 +101,16 @@ export default function JobView() {
     return () => {
       stop = true;
     };
-  }, [jobId]);
+  }, [jobId, pollNonce]);
 
-  // When an Opus rescore finishes, the page needs a fresh load to pull in the
-  // updated scores. Track the running->completed transition and reload once.
-  const wasRescoringRef = useRef(false);
+  // Called when the rescore POST succeeds: mark a rescore as pending and restart
+  // polling so the progress bar appears and the page auto-refreshes when done.
+  const handleRescoreStarted = () => {
+    pendingRescoreRef.current = true;
+    wasRescoringRef.current = true;
+    setPollNonce((n) => n + 1);
+  };
+
   useEffect(() => {
     const s = job?.contextSummary?.rescoreStatus?.status;
     if (s === "running") {
@@ -199,6 +220,7 @@ export default function JobView() {
             status={job.status}
             results={job.results}
             rescoreStatus={job.contextSummary?.rescoreStatus}
+            onStarted={handleRescoreStarted}
           />
           <a
             href={`${(window as any).__API_BASE__ || ""}/api/jobs/${job.id}/csv`}

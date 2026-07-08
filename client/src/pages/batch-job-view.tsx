@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRoute, Link } from "wouter";
 import { AppShell } from "@/components/app-shell";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { apiRequest } from "@/lib/queryClient";
 import { FeedbackButton, CalibrationFeedback } from "@/components/feedback-button";
 import { CalibrationApplied } from "@/components/calibration-applied";
-import { RescoreButton, RescoreStatusBanner } from "@/components/rescore-button";
+import { RescoreButton, RescoreStatusBanner, RescoreStatus } from "@/components/rescore-button";
 import {
   BarChart,
   Bar,
@@ -91,6 +92,13 @@ export default function BatchJobView() {
   const jobId = params?.id;
   const [job, setJob] = useState<BatchJobDetail | null>(null);
 
+  // Bumping this restarts the poll loop, which otherwise stops once the batch is
+  // done — but the user can later kick off an Opus rescore that needs polling.
+  const [pollNonce, setPollNonce] = useState(0);
+  // True from rescore request until we observe it finish, so the restarted poll
+  // loop keeps going through the window before the server reports "running".
+  const pendingRescoreRef = useRef(false);
+
   useEffect(() => {
     if (!jobId) return;
     let stop = false;
@@ -102,9 +110,13 @@ export default function BatchJobView() {
         const data = (await res.json()) as BatchJobDetail;
         if (!stop) setJob(data);
         const terminalStatuses = ["ended", "canceled", "expired", "errored"];
-        const rescoreRunning = data.contextSummary?.rescoreStatus?.status === "running";
-        if (!stop && (!terminalStatuses.includes(data.status) || rescoreRunning)) {
-          setTimeout(poll, rescoreRunning ? 3_000 : 15_000);
+        const rescoreState = data.contextSummary?.rescoreStatus?.status;
+        if (rescoreState === "completed" || rescoreState === "failed") {
+          pendingRescoreRef.current = false;
+        }
+        const rescoreActive = rescoreState === "running" || pendingRescoreRef.current;
+        if (!stop && (!terminalStatuses.includes(data.status) || rescoreActive)) {
+          setTimeout(poll, rescoreActive ? 3_000 : 15_000);
         }
       } catch {
         if (!stop) setTimeout(poll, 20_000);
@@ -112,7 +124,14 @@ export default function BatchJobView() {
     }
     poll();
     return () => { stop = true; };
-  }, [jobId]);
+  }, [jobId, pollNonce]);
+
+  // Called when the rescore POST succeeds: restart polling so the progress bar
+  // shows and the results live-update when the Opus rerun finishes.
+  const handleRescoreStarted = () => {
+    pendingRescoreRef.current = true;
+    setPollNonce((n) => n + 1);
+  };
 
   const dist = useMemo(() => {
     const buckets: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
@@ -174,6 +193,15 @@ export default function BatchJobView() {
 
   const isProcessing = !["ended", "canceled", "expired", "errored"].includes(job.status);
 
+  // While Opus is re-scoring borderline candidates, show a live progress bar.
+  // (Anthropic handles the original batch async, so there's no bar for that —
+  // but the Opus rescore runs in-process and reports completed/total.)
+  const rescoreStatus = job.contextSummary?.rescoreStatus as RescoreStatus | undefined;
+  const rescoreRunning = rescoreStatus?.status === "running";
+  const rescoreDone = (rescoreStatus?.completed ?? 0) + (rescoreStatus?.failed ?? 0);
+  const rescoreTotal = rescoreStatus?.total ?? 0;
+  const rescorePct = rescoreTotal === 0 ? 0 : Math.round((rescoreDone / rescoreTotal) * 100);
+
   return (
     <AppShell>
       <div className="mb-4">
@@ -203,6 +231,7 @@ export default function BatchJobView() {
                 status={job.status}
                 results={job.results}
                 rescoreStatus={job.contextSummary?.rescoreStatus}
+                onStarted={handleRescoreStarted}
               />
               <a href={`${(window as any).__API_BASE__ || ""}/api/batch-jobs/${job.id}/csv`} download>
                 <Button variant="outline" className="gap-2">
@@ -232,6 +261,21 @@ export default function BatchJobView() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Opus rescore progress */}
+      {rescoreRunning && (
+        <Card className="mb-6">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-sm font-medium">Opus Rerun Progress</div>
+              <div className="text-sm text-muted-foreground">
+                {`${rescoreDone} / ${rescoreTotal} (${rescorePct}%) · ${rescoreStatus?.failed ?? 0} failed`}
+              </div>
+            </div>
+            <Progress value={rescorePct} />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Pending state */}
       {isProcessing && (

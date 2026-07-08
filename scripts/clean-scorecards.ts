@@ -253,7 +253,7 @@ async function main() {
   const rows = await sql`
     SELECT id, file_name, content_text
     FROM role_files
-    WHERE category = 'scorecards'
+    WHERE category IN ('positive_scorecards', 'negative_scorecards')
     ORDER BY file_name
   `;
 

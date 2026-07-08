@@ -16,9 +16,10 @@ export default function Home() {
           Score sourced candidates against the people who actually got the job.
         </h1>
         <p className="text-muted-foreground mb-6">
-          Upload a CSV of LinkedIn profiles and role context files — JD, hiring-manager notes, a
-          weighted scoring rubrik, resumes of folks you hired and didn't hire, interview transcripts,
-          scorecards, incumbent profiles — then rank each candidate 1 to 5 with a one-sentence
+          Upload a CSV of LinkedIn profiles and role context files — JD, hiring-manager notes,
+          department overview, a weighted scoring rubrik, current phData employees in the role,
+          resumes of folks you passed on, positive and negative interview scorecards, transcripts,
+          and benchmark LinkedIn profiles — then rank each candidate 1 to 5 with a one-sentence
           reason.
         </p>
         <div className="flex items-center justify-center gap-3">
@@ -42,8 +43,9 @@ export default function Home() {
             <Folder className="h-5 w-5 text-primary mb-3" />
             <div className="font-medium mb-1">Upload role context</div>
             <div className="text-sm text-muted-foreground">
-              Upload JDs, HM notes, a weighted scoring rubrik, hired/not-hired resumes, transcripts,
-              scorecards, and incumbent profiles for each role.
+              Upload JDs, HM notes, department overview, a weighted scoring rubrik, current phData
+              employees, not-hired resumes, transcripts, positive and negative scorecards, and
+              benchmark LinkedIn profiles for each role.
             </div>
           </CardContent>
         </Card>
