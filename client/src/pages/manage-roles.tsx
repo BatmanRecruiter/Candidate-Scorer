@@ -24,30 +24,7 @@ import {
   X,
 } from "lucide-react";
 
-const CATEGORIES = [
-  "jd",
-  "hm_notes",
-  "rubrik",
-  "hired",
-  "not_hired",
-  "transcripts",
-  "scorecards",
-  "incumbents",
-  "benchmark_candidates",
-] as const;
-type Category = (typeof CATEGORIES)[number];
-
-const CATEGORY_LABEL: Record<Category, string> = {
-  jd: "Job description",
-  hm_notes: "HM notes",
-  rubrik: "Scoring rubrik",
-  hired: "Hired resumes",
-  not_hired: "Not-hired resumes",
-  transcripts: "Interview transcripts",
-  scorecards: "Scorecards",
-  incumbents: "Incumbent profiles",
-  benchmark_candidates: "Benchmark candidates",
-};
+import { CATEGORIES, CATEGORY_LABEL, type Category } from "@shared/categories";
 
 interface RoleSummary {
   roleId: string;

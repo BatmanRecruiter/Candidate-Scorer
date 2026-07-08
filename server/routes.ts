@@ -368,19 +368,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         };
         const contextSummary = { ...baseSummary, calibrationApplied };
 
-        const ctx: RoleContext = {
-          roleName: role.roleName,
-          jd: hits.jd,
-          hmNotes: hits.hm_notes,
-          rubrik: hits.rubrik,
-          hired: hits.hired,
-          notHired: hits.not_hired,
-          transcripts: hits.transcripts,
-          scorecards: hits.scorecards,
-          incumbents: hits.incumbents,
-          benchmarkCandidates: hits.benchmark_candidates,
-          calibrationNotes,
-        };
+        const ctx = toRoleContext(role.roleName, hits, calibrationNotes);
         const systemPrompt = buildSystemPrompt(ctx);
 
         // Pre-extract display fields (name, url, company, title) from each row
@@ -587,10 +575,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       return res.status(409).json({ message: "A rescore is already in progress for this job" });
     }
 
+    // Which scores to rescore. The popup sends e.g. [2,3,4]; if nothing is
+    // provided we fall back to the old default of 3 and 4. We only ever allow
+    // 2/3/4 — 1s and 5s are clear-cut and not worth the pricier Opus pass.
+    const requestedScores: number[] = Array.isArray(req.body?.scores)
+      ? req.body.scores.map(Number).filter((s: number) => [2, 3, 4].includes(s))
+      : [];
+    const scores = requestedScores.length ? requestedScores : [3, 4];
+
     const allResults: ScoreResult[] = JSON.parse(job.results);
-    // Borderline = score 3 or 4 that wasn't already rescored by Opus.
+    // Borderline = one of the chosen scores that wasn't already rescored by Opus.
     const borderline = allResults.filter(
-      (r) => !r.error && (r.score === 3 || r.score === 4) && r.scoredBy !== "opus",
+      (r) => !r.error && scores.includes(r.score) && r.scoredBy !== "opus",
     );
 
     if (!borderline.length) {
@@ -617,19 +613,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const role = await storage.getRole(job.roleId!);
         if (!role) throw new Error("role not found for job");
         const { hits } = await loadRoleContext(role.roleId);
-        const ctx: RoleContext = {
-          roleName: job.roleName,
-          jd: hits.jd,
-          hmNotes: hits.hm_notes,
-          rubrik: hits.rubrik,
-          hired: hits.hired,
-          notHired: hits.not_hired,
-          transcripts: hits.transcripts,
-          scorecards: hits.scorecards,
-          incumbents: hits.incumbents,
-          benchmarkCandidates: hits.benchmark_candidates,
-          calibrationNotes: await buildCalibrationNotes(role.roleId),
-        };
+        const ctx = toRoleContext(
+          job.roleName,
+          hits,
+          await buildCalibrationNotes(role.roleId),
+        );
 
         // Index results by rowIndex for in-place updates.
         const byRow = new Map<number, ScoreResult>();
@@ -722,9 +710,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       return res.json({ jobId: batchJob.id, rescoreCount: 0, message: "No results to rescore." });
     }
 
+    const requestedScores: number[] = Array.isArray(req.body?.scores)
+      ? req.body.scores.map(Number).filter((s: number) => [2, 3, 4].includes(s))
+      : [];
+    const scores = requestedScores.length ? requestedScores : [3, 4];
+
     const allResults: ScoreResult[] = JSON.parse(batchJob.results);
     const borderline = allResults.filter(
-      (r) => !r.error && (r.score === 3 || r.score === 4) && r.scoredBy !== "opus",
+      (r) => !r.error && scores.includes(r.score) && r.scoredBy !== "opus",
     );
     if (!borderline.length) {
       return res.json({ jobId: batchJob.id, rescoreCount: 0, message: "No borderline candidates to rescore." });
@@ -747,19 +740,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const role = await storage.getRole(batchJob.roleId!);
         if (!role) throw new Error("role not found for batch job");
         const { hits } = await loadRoleContext(role.roleId);
-        const ctx: RoleContext = {
-          roleName: batchJob.roleName,
-          jd: hits.jd,
-          hmNotes: hits.hm_notes,
-          rubrik: hits.rubrik,
-          hired: hits.hired,
-          notHired: hits.not_hired,
-          transcripts: hits.transcripts,
-          scorecards: hits.scorecards,
-          incumbents: hits.incumbents,
-          benchmarkCandidates: hits.benchmark_candidates,
-          calibrationNotes: await buildCalibrationNotes(role.roleId),
-        };
+        const ctx = toRoleContext(
+          batchJob.roleName,
+          hits,
+          await buildCalibrationNotes(role.roleId),
+        );
 
         const byRow = new Map<number, ScoreResult>();
         for (const r of allResults) byRow.set(r.rowIndex, r);
@@ -1220,12 +1205,13 @@ async function buildCalibrationNotes(roleId: string): Promise<string[]> {
 const ZERO_COUNTS: Record<Category | "uncategorized", number> = {
   jd: 0,
   hm_notes: 0,
+  dept_notes: 0,
   rubrik: 0,
-  hired: 0,
+  current_employees: 0,
   not_hired: 0,
   transcripts: 0,
-  scorecards: 0,
-  incumbents: 0,
+  positive_scorecards: 0,
+  negative_scorecards: 0,
   benchmark_candidates: 0,
   uncategorized: 0,
 };
@@ -1245,17 +1231,42 @@ function buildSummary(files: FileLoadInfo[], hits: CategoryHits) {
   return {
     jd: registered.jd,
     hm_notes: registered.hm_notes,
+    dept_notes: registered.dept_notes,
     rubrik: registered.rubrik,
-    hired: registered.hired,
+    current_employees: registered.current_employees,
     not_hired: registered.not_hired,
     transcripts: registered.transcripts,
-    scorecards: registered.scorecards,
-    incumbents: registered.incumbents,
+    positive_scorecards: registered.positive_scorecards,
+    negative_scorecards: registered.negative_scorecards,
     benchmark_candidates: registered.benchmark_candidates,
     uncategorized: registered.uncategorized,
     totalChars,
     registered,
     readable,
+  };
+}
+
+// Single mapping from the snake_case CategoryHits buckets to the camelCase
+// RoleContext the scorer consumes. Used at every scoring/rescore call site so
+// the field mapping lives in exactly one place.
+function toRoleContext(
+  roleName: string,
+  hits: CategoryHits,
+  calibrationNotes: string[],
+): RoleContext {
+  return {
+    roleName,
+    jd: hits.jd,
+    hmNotes: hits.hm_notes,
+    deptNotes: hits.dept_notes,
+    rubrik: hits.rubrik,
+    currentEmployees: hits.current_employees,
+    notHired: hits.not_hired,
+    transcripts: hits.transcripts,
+    positiveScorecards: hits.positive_scorecards,
+    negativeScorecards: hits.negative_scorecards,
+    benchmarkCandidates: hits.benchmark_candidates,
+    calibrationNotes,
   };
 }
 
@@ -1287,19 +1298,7 @@ async function runScoringJob(args: {
   headerCount: number;
 }) {
   const { jobId, roleId, roleName, hits, candidateRows } = args;
-  const ctx: RoleContext = {
-    roleName,
-    jd: hits.jd,
-    hmNotes: hits.hm_notes,
-    rubrik: hits.rubrik,
-    hired: hits.hired,
-    notHired: hits.not_hired,
-    transcripts: hits.transcripts,
-    scorecards: hits.scorecards,
-    incumbents: hits.incumbents,
-    benchmarkCandidates: hits.benchmark_candidates,
-    calibrationNotes: await buildCalibrationNotes(roleId),
-  };
+  const ctx = toRoleContext(roleName, hits, await buildCalibrationNotes(roleId));
 
   const results: ScoreResult[] = [];
   let completed = 0;

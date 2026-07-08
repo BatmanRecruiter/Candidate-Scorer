@@ -1,9 +1,22 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogFooter,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { Loader2, Sparkles, AlertTriangle } from "lucide-react";
+
+// Scores the user is allowed to send to Opus. 1s and 5s are clear-cut, so we
+// never rescore them — only these "borderline" tiers are worth the pricier pass.
+const RESCORABLE_SCORES = [2, 3, 4] as const;
 
 export interface RescoreStatus {
   status: "running" | "completed" | "failed";
@@ -30,6 +43,7 @@ export function RescoreButton({
   status,
   results,
   rescoreStatus,
+  onStarted,
 }: {
   jobId: string;
   apiEndpoint: string;
@@ -37,32 +51,41 @@ export function RescoreButton({
   status: string;
   results: ResultRow[];
   rescoreStatus?: RescoreStatus | null;
+  // Fired once the rescore POST succeeds, so the parent page can resume polling
+  // (its poll loop has usually already stopped because the original run is done).
+  onStarted?: () => void;
 }) {
   const { toast } = useToast();
   const [submitting, setSubmitting] = useState(false);
+  const [open, setOpen] = useState(false);
+  // Which score tiers are ticked in the popup. Default to 3 and 4 (the old
+  // behaviour); the user can add 2 or untick any of them per role/search.
+  const [selected, setSelected] = useState<Record<number, boolean>>({ 3: true, 4: true });
 
   if (status !== completedStatus) return null;
   if (rescoreStatus?.status === "running") return null;
 
-  const borderlineCount = results.filter(
-    (r) => !r.error && (r.score === 3 || r.score === 4) && r.scoredBy !== "opus",
-  ).length;
-  if (borderlineCount === 0) return null;
+  // How many not-yet-Opus candidates sit at each rescorable score tier.
+  const countByScore = (score: number) =>
+    results.filter((r) => !r.error && r.score === score && r.scoredBy !== "opus").length;
+  const counts: Record<number, number> = {};
+  for (const s of RESCORABLE_SCORES) counts[s] = countByScore(s);
+
+  const eligibleTotal = RESCORABLE_SCORES.reduce((sum, s) => sum + counts[s], 0);
+  if (eligibleTotal === 0) return null;
+
+  const chosenScores = RESCORABLE_SCORES.filter((s) => selected[s] && counts[s] > 0);
+  const selectedCount = chosenScores.reduce((sum, s) => sum + counts[s], 0);
 
   async function start() {
-    if (
-      !confirm(
-        `This will re-score ${borderlineCount} borderline candidate${borderlineCount === 1 ? "" : "s"} ` +
-          `(score 3-4) using Claude Opus — a higher-quality but more expensive model. Continue?`,
-      )
-    )
-      return;
     setSubmitting(true);
     try {
-      await apiRequest("POST", apiEndpoint, undefined);
+      await apiRequest("POST", apiEndpoint, { scores: chosenScores });
+      setOpen(false);
+      onStarted?.();
       toast({
         title: "Rescore started",
-        description: `Re-scoring ${borderlineCount} candidate${borderlineCount === 1 ? "" : "s"} with Opus.`,
+        description: `Re-scoring ${selectedCount} candidate${selectedCount === 1 ? "" : "s"} with Opus.`,
       });
     } catch (e: any) {
       toast({
@@ -76,21 +99,77 @@ export function RescoreButton({
   }
 
   return (
-    <Button
-      variant="outline"
-      className="gap-2"
-      onClick={start}
-      disabled={submitting}
-      data-testid="button-rescore-borderline"
-      title={`Re-score the ${borderlineCount} borderline candidate${borderlineCount === 1 ? "" : "s"} (3/4) with Opus`}
-    >
-      {submitting ? (
-        <Loader2 className="h-4 w-4 animate-spin" />
-      ) : (
+    <>
+      <Button
+        variant="outline"
+        className="gap-2"
+        onClick={() => setOpen(true)}
+        data-testid="button-rescore-borderline"
+        title={`Choose which scores to re-score with Opus (${eligibleTotal} eligible)`}
+      >
         <Sparkles className="h-4 w-4" />
-      )}
-      Re-score borderline (Opus)
-    </Button>
+        Re-score with Opus
+      </Button>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Re-score with Opus</DialogTitle>
+            <DialogDescription>
+              Choose which scores to re-evaluate with Claude Opus — a higher-quality
+              but more expensive model. 1s and 5s are skipped.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            {RESCORABLE_SCORES.map((s) => {
+              const count = counts[s];
+              const disabled = count === 0;
+              return (
+                <label
+                  key={s}
+                  className={`flex items-center gap-3 rounded-md border p-3 text-sm ${
+                    disabled ? "opacity-50" : "cursor-pointer hover:bg-muted/50"
+                  }`}
+                  data-testid={`rescore-option-${s}`}
+                >
+                  <Checkbox
+                    checked={!!selected[s] && !disabled}
+                    disabled={disabled}
+                    onCheckedChange={(v) =>
+                      setSelected((prev) => ({ ...prev, [s]: v === true }))
+                    }
+                  />
+                  <span className="font-medium">Score {s}</span>
+                  <span className="ml-auto text-muted-foreground">
+                    {count} candidate{count === 1 ? "" : "s"}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setOpen(false)} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button
+              className="gap-2"
+              onClick={start}
+              disabled={submitting || selectedCount === 0}
+              data-testid="button-rescore-confirm"
+            >
+              {submitting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="h-4 w-4" />
+              )}
+              Re-score {selectedCount} candidate{selectedCount === 1 ? "" : "s"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

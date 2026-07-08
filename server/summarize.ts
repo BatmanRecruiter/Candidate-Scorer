@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import { cachedMessage } from "./anthropicClient";
+import { CATEGORY_LABEL, type Category } from "@shared/categories";
 
 // Cheap, fast model — summaries are one-shot per file and stored, so this cost
 // is paid once, not per scoring run.
@@ -20,10 +21,10 @@ const SUMMARY_MODEL = "claude-haiku-4-5";
 export const SUMMARY_CHAR_THRESHOLD = 6000;
 
 // Authoritative / directive material we NEVER summarize — losing a line from
-// the rubric, the job description, or the hiring-manager notes could change a
-// score. Everything else (transcripts, resumes, scorecards, incumbents,
-// benchmarks) is fair game once it crosses the size threshold.
-const NEVER_SUMMARIZE = new Set(["rubrik", "jd", "hm_notes"]);
+// the rubric, the job description, the hiring-manager notes, or the department
+// overview could change a score. Everything else (transcripts, resumes,
+// scorecards, benchmarks) is fair game once it crosses the size threshold.
+const NEVER_SUMMARIZE = new Set(["rubrik", "jd", "hm_notes", "dept_notes"]);
 
 /** Should this file be distilled before going into the scoring prompt? */
 export function shouldSummarize(category: string | null, text: string): boolean {
@@ -37,6 +38,7 @@ const SUMMARY_SYSTEM = `You distill reference documents that a recruiter uses to
 KEEP (in priority order):
 - Hard requirements and disqualifiers: required years of experience, specific skills/tools/technologies, degrees, certifications, clearances, location/visa constraints. Quote exact numbers and terms verbatim.
 - What distinguishes strong candidates from weak ones for this role: the experience, accomplishments, or traits the team valued or rejected.
+- For scorecards, the interview outcome and the concrete reasons for it — why the candidate was advanced ("Positive scorecards") or passed on ("Negative scorecards"). Preserve the polarity signalled by the document category.
 - Red flags and dealbreakers surfaced in the document.
 - Calibration cues: concrete examples of what "good" versus "not good enough" looks like.
 
@@ -68,7 +70,7 @@ export async function summarizeForScoring(opts: {
       {
         role: "user",
         content:
-          `Document category: ${category}\nFile name: ${fileName}\n\n` +
+          `Document category: ${CATEGORY_LABEL[category as Category] ?? category}\nFile name: ${fileName}\n\n` +
           `--- BEGIN DOCUMENT ---\n${text}\n--- END DOCUMENT ---\n\n` +
           `Produce the scoring-relevant summary now.`,
       },

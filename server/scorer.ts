@@ -24,12 +24,13 @@ export interface RoleContext {
   roleName: string;
   jd: string[];
   hmNotes: string[];
+  deptNotes: string[];
   rubrik: string[];
-  hired: string[];
+  currentEmployees: string[];
   notHired: string[];
   transcripts: string[];
-  scorecards: string[];
-  incumbents: string[];
+  positiveScorecards: string[];
+  negativeScorecards: string[];
   benchmarkCandidates: string[];
   calibrationNotes: string[];
 }
@@ -98,22 +99,48 @@ export function buildSystemPrompt(ctx: RoleContext): string {
     `PHDATA RULE — applies BEFORE normal scoring and takes precedence over every other rule and the rubrik:`,
     `- If the candidate currently works at phData, or has EVER worked at phData in the past, return score 1 with reason set to exactly "phData" (that one word, nothing else — no period, no explanation).`,
     `- Check the company name in EVERY CompanyN entry on the profile, not just Company1. Match the name case-insensitively and ignore suffixes (e.g. "phData", "phdata", "phData, Inc." all count).`,
+    `- This rule evaluates ONLY the candidate being scored. Reference materials in this prompt (especially CURRENT_PHDATA_EMPLOYEES_IN_ROLE) describe phData employees by design — their mention of phData must NEVER trigger this rule.`,
     `- When this rule triggers, output exactly: {"score":1,"reason":"phData","totalYoe":<computed>}. Still compute totalYoe normally.`,
     ``,
     `Reference materials (the SCORING_RUBRIK is the authoritative source when present — all other materials are supporting context):`,
     formatBucket("SCORING_RUBRIK", ctx.rubrik),
     formatBucket("JOB_DESCRIPTION", ctx.jd),
     formatBucket("HIRING_MANAGER_NOTES", ctx.hmNotes),
-    formatBucket("RESUMES_OF_PEOPLE_WE_HIRED", ctx.hired),
+    formatBucket("DEPARTMENT_OVERVIEW_NOTES", ctx.deptNotes),
+    formatBucket("CURRENT_PHDATA_EMPLOYEES_IN_ROLE", ctx.currentEmployees),
     formatBucket("RESUMES_OF_PEOPLE_WE_DID_NOT_HIRE", ctx.notHired),
     formatBucket("INTERVIEW_TRANSCRIPTS", ctx.transcripts),
-    formatBucket("INTERVIEW_SCORECARDS", ctx.scorecards),
-    formatBucket("CURRENT_INCUMBENTS_IN_THIS_ROLE", ctx.incumbents),
-    formatBucket("BENCHMARK_CANDIDATES_ASPIRATIONAL", ctx.benchmarkCandidates),
+    formatBucket("POSITIVE_INTERVIEW_SCORECARDS", ctx.positiveScorecards),
+    formatBucket("NEGATIVE_INTERVIEW_SCORECARDS", ctx.negativeScorecards),
+    formatBucket("POSITIVE_BENCHMARK_CANDIDATE_LINKEDIN_PROFILES", ctx.benchmarkCandidates),
     ``,
+    ...(ctx.deptNotes.length
+      ? [
+          `IMPORTANT — about DEPARTMENT_OVERVIEW_NOTES: general background on the department this role sits in — its mission, structure, and priorities. Use it as supporting context to understand what the role actually does. It is NOT a requirements list: do not derive must-haves from it. Requirements come from the SCORING_RUBRIK, JOB_DESCRIPTION, and HIRING_MANAGER_NOTES (the hiring manager's intake-call notes).`,
+          ``,
+        ]
+      : []),
+    ...(ctx.currentEmployees.length
+      ? [
+          `IMPORTANT — about CURRENT_PHDATA_EMPLOYEES_IN_ROLE: these are resumes of people CURRENTLY employed at phData in this exact role. They show what the job actually requires — the real skill floor and background mix of people successfully doing the work today. They are reference material, not aspirational targets (POSITIVE_BENCHMARK_CANDIDATE_LINKEDIN_PROFILES describes who we WANT to find; this bucket describes who is already in the seat). Use them to judge whether a candidate could realistically do this job. NOTE: these reference resumes naturally mention phData — that does NOT trigger the PHDATA RULE. That rule applies ONLY to the candidate being scored, never to reference materials.`,
+          ``,
+        ]
+      : []),
+    ...(ctx.positiveScorecards.length
+      ? [
+          `IMPORTANT — about POSITIVE_INTERVIEW_SCORECARDS: every scorecard in this bucket is from a candidate we LIKED and advanced in our process. Treat them as positive signal only: identify the skills, experience, and traits our interviewers praised, and score candidates who show similar strengths HIGHER. Do NOT mine these for negative signal — even critical comments here belong to candidates we ultimately moved forward.`,
+          ``,
+        ]
+      : []),
+    ...(ctx.negativeScorecards.length
+      ? [
+          `IMPORTANT — about NEGATIVE_INTERVIEW_SCORECARDS: every scorecard in this bucket is from a candidate we PASSED ON. Study them for recurring patterns of poor fit — the gaps, red flags, and weaknesses that made our interviewers say no — and score candidates who show similar traits LOWER. A candidate who resembles the people we rejected is likely a poor fit even if their profile looks superficially strong.`,
+          ``,
+        ]
+      : []),
     ...(ctx.benchmarkCandidates.length
       ? [
-          `IMPORTANT — about BENCHMARK_CANDIDATES_ASPIRATIONAL: these are external profiles representing the kind of background, skills, and experience we WANT to find. They were NOT actually hired. Treat them as strong positive references: a candidate who resembles them should score higher. Do NOT treat them the same as RESUMES_OF_PEOPLE_WE_HIRED — those are confirmed hires; benchmarks are targets.`,
+          `IMPORTANT — about POSITIVE_BENCHMARK_CANDIDATE_LINKEDIN_PROFILES: these are LinkedIn profiles of people who represent the background, skills, and experience we WANT to find for this role. They were NOT necessarily hired here — they are positive reference points for what a strong candidate looks like. A candidate who resembles them should score higher.`,
           ``,
         ]
       : []),
@@ -126,10 +153,10 @@ export function buildSystemPrompt(ctx: RoleContext): string {
         ]
       : []),
     `Scoring scale (1-5 integer, 5 is best):`,
-    `5 — Excellent match. Reach out today. Hits all heavy must-haves plus strong pluses; resembles hired candidates / incumbents.`,
+    `5 — Excellent match. Reach out today. Hits all heavy must-haves plus strong pluses; resembles current phData employees in the role, positive scorecards, or benchmark profiles.`,
     `4 — Good match. Worth reaching out. Hits all 3-weight must-haves; modest gaps only on lower-weighted items.`,
     `3 — Borderline. Some must-have alignment but gaps on heavy items, or thin signal overall.`,
-    `2 — Weak. Multiple heavy must-haves missing or resembles not-hired profiles.`,
+    `2 — Weak. Multiple heavy must-haves missing, or resembles not-hired profiles / patterns from negative scorecards.`,
     `1 — Skip. Missing a non-negotiable, OR wrong role/level entirely.`,
     ``,
     ...(hasRubrik
@@ -148,7 +175,7 @@ export function buildSystemPrompt(ctx: RoleContext): string {
           ``,
         ]
       : [
-          `No SCORING_RUBRIK is provided for this role. Fall back to the JD and HM notes for must-haves, and use the hired vs. not-hired comparison to calibrate. Features common to hired candidates push UP; features common to not-hired candidates push DOWN.`,
+          `No SCORING_RUBRIK is provided for this role. Fall back to the JD and HM notes for must-haves, and calibrate with the reference materials: traits common to current phData employees in the role, positive scorecards, and benchmark profiles push scores UP; traits common to not-hired resumes and negative scorecards push scores DOWN.`,
           ``,
         ]),
     `CRITICAL OUTPUT FORMAT: Your ENTIRE response must be a single JSON object and NOTHING ELSE. No preamble, no reasoning, no markdown, no analysis, no checklists. Do your reasoning silently in your head and output ONLY the JSON. Start your response with { and end with }.`,
