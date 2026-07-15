@@ -1,0 +1,478 @@
+<title>Is This Saturday A Weekend?</title>
+<meta name="description" content="The world's most authoritative weekend detector. Pick a Saturday, get the truth." />
+<style>
+  :root {
+    color-scheme: light dark;
+    --paper: #FBF7EE;
+    --card: #FFFFFF;
+    --ink: #1C1A17;
+    --ink-soft: #5B554B;
+    --line: #E7DFCC;
+    --gold: #F6B21B;
+    --gold-deep: #C9820A;
+    --yes: #12986A;
+    --no: #E23A2E;
+    --shadow: 24px 24px 0 rgba(28, 26, 23, 0.10);
+    --focus: #1C1A17;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #17150F;
+      --card: #201D16;
+      --ink: #F5EFE0;
+      --ink-soft: #B7AE99;
+      --line: #372F20;
+      --gold: #F6B21B;
+      --gold-deep: #FFD36B;
+      --yes: #34D399;
+      --no: #FF6A5E;
+      --shadow: 24px 24px 0 rgba(0, 0, 0, 0.45);
+      --focus: #F6B21B;
+    }
+  }
+  :root[data-theme="light"] {
+    --paper: #FBF7EE; --card: #FFFFFF; --ink: #1C1A17; --ink-soft: #5B554B;
+    --line: #E7DFCC; --gold: #F6B21B; --gold-deep: #C9820A; --yes: #12986A;
+    --no: #E23A2E; --shadow: 24px 24px 0 rgba(28, 26, 23, 0.10); --focus: #1C1A17;
+  }
+  :root[data-theme="dark"] {
+    --paper: #17150F; --card: #201D16; --ink: #F5EFE0; --ink-soft: #B7AE99;
+    --line: #372F20; --gold: #F6B21B; --gold-deep: #FFD36B; --yes: #34D399;
+    --no: #FF6A5E; --shadow: 24px 24px 0 rgba(0, 0, 0, 0.45); --focus: #F6B21B;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: clamp(20px, 5vw, 64px) 20px 64px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .eyebrow {
+    font-size: 0.72rem;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--gold-deep);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6em;
+    margin-bottom: clamp(18px, 4vw, 34px);
+  }
+  .eyebrow::before, .eyebrow::after {
+    content: "";
+    width: 26px; height: 2px;
+    background: var(--gold);
+  }
+
+  h1 {
+    font-family: "Arial Black", "Helvetica Neue", system-ui, sans-serif;
+    font-weight: 900;
+    font-size: clamp(2.6rem, 9vw, 6rem);
+    line-height: 0.92;
+    letter-spacing: -0.03em;
+    text-align: center;
+    text-wrap: balance;
+    margin: 0;
+    max-width: 14ch;
+  }
+  h1 .q { color: var(--gold-deep); }
+
+  .sub {
+    margin: clamp(14px, 3vw, 22px) 0 clamp(30px, 6vw, 46px);
+    color: var(--ink-soft);
+    font-size: clamp(0.95rem, 2.4vw, 1.1rem);
+    text-align: center;
+    max-width: 46ch;
+    line-height: 1.5;
+  }
+
+  .stage {
+    width: 100%;
+    max-width: 560px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 26px;
+  }
+
+  /* --- Picker field --- */
+  .picker { position: relative; width: 100%; }
+  .field {
+    width: 100%;
+    background: var(--card);
+    border: 2.5px solid var(--ink);
+    border-radius: 16px;
+    padding: 18px 20px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    cursor: pointer;
+    font: inherit;
+    color: var(--ink);
+    text-align: left;
+    box-shadow: var(--shadow);
+    transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .field:hover { transform: translate(-3px, -3px); box-shadow: 30px 30px 0 rgba(28,26,23,.12); }
+  .field:active { transform: translate(2px, 2px); }
+  .field:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
+  .field .cal-emoji { font-size: 1.5rem; line-height: 1; }
+  .field .field-text { flex: 1; }
+  .field .field-label {
+    display: block;
+    font-size: 0.68rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--ink-soft);
+    margin-bottom: 3px;
+  }
+  .field .field-value { font-size: 1.12rem; font-weight: 700; }
+  .field .chev { color: var(--ink-soft); font-size: 1.1rem; transition: transform .2s ease; }
+  .picker.open .chev { transform: rotate(180deg); }
+
+  /* --- Calendar popup --- */
+  .cal {
+    position: absolute;
+    top: calc(100% + 12px);
+    left: 0; right: 0;
+    background: var(--card);
+    border: 2.5px solid var(--ink);
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    padding: 18px;
+    z-index: 20;
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+    transform-origin: top center;
+    pointer-events: none;
+    transition: opacity .16s ease, transform .16s ease;
+  }
+  .picker.open .cal { opacity: 1; transform: none; pointer-events: auto; }
+
+  .cal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .cal-title { font-weight: 900; font-size: 1.05rem; letter-spacing: -0.01em; }
+  .cal-nav {
+    width: 38px; height: 38px;
+    border: 2px solid var(--ink);
+    background: var(--card);
+    color: var(--ink);
+    border-radius: 10px;
+    font-size: 1.1rem;
+    cursor: pointer;
+    display: grid; place-items: center;
+    transition: background .12s ease, transform .1s ease;
+  }
+  .cal-nav:hover:not(:disabled) { background: var(--gold); }
+  .cal-nav:active:not(:disabled) { transform: scale(.92); }
+  .cal-nav:disabled { opacity: 0.28; cursor: not-allowed; }
+  .cal-nav:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .dow {
+    text-align: center;
+    font-size: 0.66rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--ink-soft);
+    padding-bottom: 6px;
+  }
+  .dow.sat { color: var(--gold-deep); }
+  .day {
+    aspect-ratio: 1 / 1;
+    border: none;
+    background: transparent;
+    color: var(--ink-soft);
+    border-radius: 10px;
+    font: inherit;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    display: grid; place-items: center;
+    cursor: default;
+    opacity: 0.35;
+  }
+  .day.empty { visibility: hidden; }
+  .day.sat {
+    color: var(--ink);
+    opacity: 1;
+    cursor: pointer;
+    background: color-mix(in srgb, var(--gold) 20%, transparent);
+    box-shadow: inset 0 0 0 2px var(--gold);
+    font-weight: 800;
+  }
+  .day.sat:hover { background: var(--gold); color: #1C1A17; }
+  .day.sat:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  .day.sat.selected { background: var(--ink); color: var(--paper); box-shadow: none; }
+  .cal-hint {
+    margin-top: 14px;
+    font-size: 0.74rem;
+    color: var(--ink-soft);
+    text-align: center;
+    line-height: 1.4;
+  }
+  .cal-hint b { color: var(--gold-deep); }
+
+  /* --- Verdict --- */
+  .verdict {
+    width: 100%;
+    text-align: center;
+    min-height: 10px;
+  }
+  .verdict-card {
+    border-radius: 22px;
+    padding: clamp(28px, 7vw, 52px) 24px;
+    border: 3px solid var(--ink);
+    box-shadow: var(--shadow);
+    opacity: 0;
+    transform: translateY(16px) scale(0.96);
+    animation: slam .42s cubic-bezier(.2,.9,.3,1.4) forwards;
+  }
+  @keyframes slam {
+    to { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .verdict-card { animation: none; opacity: 1; transform: none; }
+    .field, .cal, .cal-nav { transition: none; }
+  }
+  .verdict-card.yes { background: color-mix(in srgb, var(--yes) 16%, var(--card)); }
+  .verdict-card.no  { background: color-mix(in srgb, var(--no) 15%, var(--card)); }
+  .verdict-for {
+    font-size: 0.72rem;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--ink-soft);
+    margin-bottom: 10px;
+  }
+  .verdict-word {
+    font-family: "Arial Black", "Helvetica Neue", system-ui, sans-serif;
+    font-weight: 900;
+    font-size: clamp(4.5rem, 22vw, 10rem);
+    line-height: 0.85;
+    letter-spacing: -0.04em;
+  }
+  .verdict-word.yes { color: var(--yes); }
+  .verdict-word.no  { color: var(--no); }
+  .verdict-note {
+    margin-top: 16px;
+    font-size: clamp(1rem, 3.4vw, 1.35rem);
+    font-weight: 700;
+    color: var(--no);
+    font-style: italic;
+  }
+
+  footer {
+    margin-top: auto;
+    padding-top: 48px;
+    font-size: 0.76rem;
+    color: var(--ink-soft);
+    text-align: center;
+  }
+  footer b { color: var(--gold-deep); }
+
+  .theme-toggle {
+    position: fixed;
+    top: 16px; right: 16px;
+    width: 42px; height: 42px;
+    border-radius: 50%;
+    border: 2px solid var(--ink);
+    background: var(--card);
+    color: var(--ink);
+    cursor: pointer;
+    font-size: 1.1rem;
+    display: grid; place-items: center;
+    z-index: 50;
+  }
+  .theme-toggle:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+</style>
+
+<button class="theme-toggle" id="themeToggle" aria-label="Toggle light and dark theme">◐</button>
+
+<span class="eyebrow">Official Weekend Authority</span>
+<h1>Is this day a <span class="q">weekend?</span></h1>
+<p class="sub">Definitive rulings, one Saturday at a time. Choose any Saturday left this year and receive your verdict.</p>
+
+<main class="stage">
+  <div class="picker" id="picker">
+    <button class="field" id="field" aria-haspopup="dialog" aria-expanded="false">
+      <span class="cal-emoji" aria-hidden="true">📅</span>
+      <span class="field-text">
+        <span class="field-label">Pick a Saturday</span>
+        <span class="field-value" id="fieldValue">Tap to open the calendar</span>
+      </span>
+      <span class="chev" aria-hidden="true">▾</span>
+    </button>
+
+    <div class="cal" id="cal" role="dialog" aria-label="Saturday picker">
+      <div class="cal-head">
+        <button class="cal-nav" id="prevBtn" aria-label="Previous month">‹</button>
+        <span class="cal-title" id="calTitle">Month</span>
+        <button class="cal-nav" id="nextBtn" aria-label="Next month">›</button>
+      </div>
+      <div class="cal-grid" id="calGrid" role="grid"></div>
+      <p class="cal-hint">Only <b>Saturdays</b> are selectable — everything else is, frankly, not your concern here.</p>
+    </div>
+  </div>
+
+  <section class="verdict" id="verdict" aria-live="polite"></section>
+</main>
+
+<footer>Rulings are final. Disputes may be directed to <b>Kevin</b>.</footer>
+
+<script>
+  // The one Saturday that is officially NOT a weekend.
+  var SPECIAL = "2026-07-18";
+  var TODAY = new Date(2026, 6, 15); // 2026-07-15, the "now" this page reasons about
+  var YEAR_END = new Date(2026, 11, 31);
+  var MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  var DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+  var viewYear = TODAY.getFullYear();
+  var viewMonth = TODAY.getMonth();
+  var selectedKey = null;
+
+  var picker = document.getElementById("picker");
+  var field = document.getElementById("field");
+  var fieldValue = document.getElementById("fieldValue");
+  var cal = document.getElementById("cal");
+  var calGrid = document.getElementById("calGrid");
+  var calTitle = document.getElementById("calTitle");
+  var prevBtn = document.getElementById("prevBtn");
+  var nextBtn = document.getElementById("nextBtn");
+  var verdict = document.getElementById("verdict");
+
+  function pad(n){ return (n < 10 ? "0" : "") + n; }
+  function keyOf(y, m, d){ return y + "-" + pad(m + 1) + "-" + pad(d); }
+  function atMonthStart(y, m){ return new Date(y, m, 1); }
+
+  function render() {
+    calTitle.textContent = MONTHS[viewMonth] + " " + viewYear;
+    calGrid.innerHTML = "";
+
+    DOW.forEach(function(name, i){
+      var el = document.createElement("div");
+      el.className = "dow" + (i === 6 ? " sat" : "");
+      el.textContent = name;
+      calGrid.appendChild(el);
+    });
+
+    var first = new Date(viewYear, viewMonth, 1);
+    var lead = first.getDay();
+    var daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+
+    for (var i = 0; i < lead; i++) {
+      var blank = document.createElement("div");
+      blank.className = "day empty";
+      calGrid.appendChild(blank);
+    }
+
+    for (var d = 1; d <= daysInMonth; d++) {
+      var date = new Date(viewYear, viewMonth, d);
+      var isSat = date.getDay() === 6;
+      var inRange = date >= TODAY && date <= YEAR_END;
+      var key = keyOf(viewYear, viewMonth, d);
+
+      var cell = document.createElement(isSat && inRange ? "button" : "div");
+      cell.className = "day" + (isSat && inRange ? " sat" : "");
+      cell.textContent = d;
+
+      if (isSat && inRange) {
+        if (key === selectedKey) cell.className += " selected";
+        cell.setAttribute("aria-label", "Saturday " + MONTHS[viewMonth] + " " + d + ", " + viewYear);
+        (function(k, y, m, day){
+          cell.addEventListener("click", function(){ choose(k, y, m, day); });
+        })(key, viewYear, viewMonth, d);
+      }
+      calGrid.appendChild(cell);
+    }
+
+    // Bound navigation to today's month .. December 2026
+    prevBtn.disabled = atMonthStart(viewYear, viewMonth) <= atMonthStart(TODAY.getFullYear(), TODAY.getMonth());
+    nextBtn.disabled = atMonthStart(viewYear, viewMonth) >= atMonthStart(YEAR_END.getFullYear(), YEAR_END.getMonth());
+  }
+
+  function choose(key, y, m, d) {
+    selectedKey = key;
+    fieldValue.textContent = "Saturday, " + MONTHS[m] + " " + d + ", " + y;
+    close();
+    reveal(key, y, m, d);
+    render();
+  }
+
+  function reveal(key, y, m, d) {
+    var isNotWeekend = (key === SPECIAL);
+    var pretty = MONTHS[m] + " " + d + ", " + y;
+    verdict.innerHTML = "";
+
+    var card = document.createElement("div");
+    card.className = "verdict-card " + (isNotWeekend ? "no" : "yes");
+
+    var forLine = document.createElement("div");
+    forLine.className = "verdict-for";
+    forLine.textContent = "Ruling for Saturday, " + pretty;
+
+    var word = document.createElement("div");
+    word.className = "verdict-word " + (isNotWeekend ? "no" : "yes");
+    word.textContent = isNotWeekend ? "NO" : "YES";
+
+    card.appendChild(forLine);
+    card.appendChild(word);
+
+    if (isNotWeekend) {
+      var note = document.createElement("div");
+      note.className = "verdict-note";
+      note.textContent = "(see Kevin! Not a weekend!)";
+      card.appendChild(note);
+    }
+    verdict.appendChild(card);
+  }
+
+  function open() { picker.classList.add("open"); field.setAttribute("aria-expanded", "true"); }
+  function close() { picker.classList.remove("open"); field.setAttribute("aria-expanded", "false"); }
+  function toggle() { picker.classList.contains("open") ? close() : open(); }
+
+  field.addEventListener("click", function(e){ e.stopPropagation(); toggle(); });
+  cal.addEventListener("click", function(e){ e.stopPropagation(); });
+  document.addEventListener("click", close);
+  document.addEventListener("keydown", function(e){ if (e.key === "Escape") close(); });
+
+  prevBtn.addEventListener("click", function(e){
+    e.stopPropagation();
+    if (prevBtn.disabled) return;
+    viewMonth--; if (viewMonth < 0) { viewMonth = 11; viewYear--; }
+    render();
+  });
+  nextBtn.addEventListener("click", function(e){
+    e.stopPropagation();
+    if (nextBtn.disabled) return;
+    viewMonth++; if (viewMonth > 11) { viewMonth = 0; viewYear++; }
+    render();
+  });
+
+  // Theme toggle
+  var themeToggle = document.getElementById("themeToggle");
+  themeToggle.addEventListener("click", function(){
+    var root = document.documentElement;
+    var current = root.getAttribute("data-theme");
+    if (!current) {
+      current = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    root.setAttribute("data-theme", current === "dark" ? "light" : "dark");
+  });
+
+  render();
+</script>
