@@ -1,7 +1,7 @@
 import { cachedMessage } from "./anthropicClient";
 
 export const DEFAULT_MODEL = "claude-sonnet-4-6";
-export const OPUS_MODEL = "claude-opus-4-7";
+export const OPUS_MODEL = "claude-opus-4-8";
 export type ScoringModel = typeof DEFAULT_MODEL | typeof OPUS_MODEL;
 
 // Today's date used by the scorer for YOE math. Captured at module load; that's

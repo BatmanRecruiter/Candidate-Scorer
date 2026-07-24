@@ -1339,7 +1339,7 @@ async function runScoringJob(args: {
         "headline",
       ]);
       try {
-        const out = await scoreCandidate(ctx, candidate);
+        const out = await scoreCandidate(ctx, candidate, OPUS_MODEL);
         const r: ScoreResult = {
           rowIndex: i + 1,
           candidateName: name,
@@ -1350,7 +1350,7 @@ async function runScoringJob(args: {
           score: out.score,
           reason: out.reason,
           totalYoe: out.totalYoe,
-          scoredBy: "sonnet",
+          scoredBy: "opus",
         };
         results.push(r);
         completed++;
